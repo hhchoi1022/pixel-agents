@@ -1,7 +1,7 @@
 # Office profile (WFM → other machines)
 
-This build's custom office travels in two parts: the code (this fork, branch
-`wfm-custom`) and this `profile/` folder. The folder holds what lives in
+This build's custom office travels in two parts: the code (this fork; branch
+rules in [`FORK.md`](../FORK.md)) and this `profile/` folder. The folder holds what lives in
 `~/.pixel-agents/`, split into what's the same everywhere and what names one
 machine's paths.
 
@@ -22,7 +22,7 @@ mints its own token and asks for hook consent on first run.
 Needs Node ≥ 20 and git.
 
 ```bash
-git clone -b wfm-custom <fork-url> pixel-agents-src
+git clone -b mcs https://github.com/hhchoi1022/pixel-agents.git pixel-agents-src
 cd pixel-agents-src
 npm install
 node esbuild.js --production          # server + hook script → dist/

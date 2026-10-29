@@ -14,6 +14,9 @@ import {
   MAX_PET_ID_LENGTH,
   PET_HIT_HALF_WIDTH,
   PET_HIT_HEIGHT,
+  RESIDENT_HUE_SHIFT_BASE_DEG,
+  RESIDENT_HUE_SHIFT_STEP_DEG,
+  RESIDENT_ID_START,
   WAITING_BUBBLE_DURATION_SEC,
 } from '../../constants.js';
 import { getAnimationFrames, getCatalogEntry, getOnStateType } from '../layout/furnitureCatalog.js';
@@ -84,9 +87,19 @@ export class OfficeState {
   hoveredTile: { col: number; row: number } | null = null;
   /** Maps "parentId:toolId" → sub-agent character ID (negative) */
   subagentIdMap: Map<string, number> = new Map();
-  /** Reverse lookup: sub-agent character ID → parent info */
-  subagentMeta: Map<number, { parentAgentId: number; parentToolId: string }> = new Map();
+  /** Reverse lookup: sub-agent character ID → parent info (and the spawn's
+   *  `subagent_type`, when it said) */
+  subagentMeta: Map<number, { parentAgentId: number; parentToolId: string; agentType?: string }> =
+    new Map();
   private nextSubagentId = -1;
+  /** The open project's resident sub-agents: `subagent_type` → character id
+   *  (RESIDENT_ID_START down). Bound to a spawn through addSubagent. */
+  private residents: Map<string, number> = new Map();
+  private nextResidentId = RESIDENT_ID_START;
+  /** Agents of a project other than the current one. They keep their seats and
+   *  keep running; the office just neither draws nor hit-tests them. Set by App
+   *  on every project switch; a sub-agent follows its parent (isHidden). */
+  private hiddenAgentIds: ReadonlySet<number> = new Set();
 
   /**
    * directoryName → list of Area labels that Directory belongs to.
@@ -195,7 +208,10 @@ export class OfficeState {
     // Second pass: assign remaining characters to free seats
     for (const ch of this.characters.values()) {
       if (ch.seatId) continue;
-      const seatId = this.findFreeSeat(ch.directoryName);
+      const seatId =
+        ch.residentType !== undefined
+          ? this.findResidentSeat(this.residentDirectoryName)
+          : this.findFreeSeat(ch.directoryName);
       if (seatId) {
         this.seats.get(seatId)!.assigned = true;
         ch.seatId = seatId;
@@ -403,6 +419,27 @@ export class OfficeState {
     return this.pickFromSeats(freeSeats, electronicsTiles);
   }
 
+  /**
+   * A desk for a resident sub-agent: the free seats in its project's Area,
+   * filled bottom row first (left to right), so the residents line the desks
+   * and leave the Area's top seats — where this office puts its leads — for
+   * the agents that come and go. Falls back to findFreeSeat outside an Area.
+   */
+  private findResidentSeat(directoryName?: string): string | null {
+    const areaLabels = directoryName ? this.areaMappings[directoryName] : undefined;
+    if (areaLabels && areaLabels.length > 0) {
+      const wanted = new Set(areaLabels);
+      const inArea = [...this.seats.entries()]
+        .filter(([uid, seat]) => {
+          const label = this.seatZone(uid);
+          return !seat.assigned && label !== null && wanted.has(label);
+        })
+        .sort(([, a], [, b]) => b.seatRow - a.seatRow || a.seatCol - b.seatCol);
+      if (inArea.length > 0) return inArea[0][0];
+    }
+    return this.findFreeSeat(directoryName);
+  }
+
   /** Closest walkable tile to (col,row) not occupied by another character, or null. */
   private closestFreeWalkableTile(col: number, row: number): { col: number; row: number } | null {
     const occupied = new Set<string>();
@@ -581,6 +618,24 @@ export class OfficeState {
     this.cameraFollowId = id;
   }
 
+  /** Replace the set of agents to hide. Drops selection and camera follow off
+   *  a character that just vanished. */
+  setHiddenAgents(ids: ReadonlySet<number>): void {
+    this.hiddenAgentIds = ids;
+    if (this.selectedAgentId !== null && this.isHidden(this.selectedAgentId)) {
+      this.selectedAgentId = null;
+    }
+    if (this.cameraFollowId !== null && this.isHidden(this.cameraFollowId)) {
+      this.cameraFollowId = null;
+    }
+    // A hidden agent's desk electronics go dark with it.
+    this.rebuildFurnitureInstances();
+  }
+
+  isHidden(id: number): boolean {
+    return this.hiddenAgentIds.has(this.terminalOwnerOf(id));
+  }
+
   /** The agent that owns `id`'s terminal: a sub-agent's parent, else itself. */
   terminalOwnerOf(id: number): number {
     return this.subagentMeta.get(id)?.parentAgentId ?? id;
@@ -722,10 +777,32 @@ export class OfficeState {
     return true;
   }
 
-  /** Create a sub-agent character with the parent's palette. Returns the sub-agent ID. */
-  addSubagent(parentAgentId: number, parentToolId: string): number {
+  /**
+   * Create a sub-agent character with the parent's palette. Returns the
+   * sub-agent ID. When the parent works in the open project (`inOpenProject`)
+   * a spawn whose `agentType` names one of its residents wakes that resident
+   * instead, unless another spawn holds it — a second concurrent spawn of the
+   * same type gets an ordinary sub-agent.
+   */
+  addSubagent(
+    parentAgentId: number,
+    parentToolId: string,
+    agentType?: string,
+    inOpenProject = false,
+  ): number {
     const key = `${parentAgentId}:${parentToolId}`;
     if (this.subagentIdMap.has(key)) return this.subagentIdMap.get(key)!;
+
+    const residentId =
+      agentType !== undefined && inOpenProject ? this.residents.get(agentType) : undefined;
+    const resident = residentId !== undefined ? this.characters.get(residentId) : undefined;
+    if (residentId !== undefined && resident && !this.subagentMeta.has(residentId)) {
+      resident.parentAgentId = parentAgentId;
+      resident.isActive = true;
+      this.subagentIdMap.set(key, residentId);
+      this.subagentMeta.set(residentId, { parentAgentId, parentToolId, agentType });
+      return residentId;
+    }
 
     const id = this.nextSubagentId--;
     const parentCh = this.characters.get(parentAgentId);
@@ -740,11 +817,19 @@ export class OfficeState {
       spawn = this.closestFreeWalkableTile(parentCol, parentRow) ?? this.walkableTiles[0];
     }
 
-    const ch = createCharacter(id, palette, null, null, hueShift);
+    // Claim the free seat closest to the parent's seat; the sub spawns beside
+    // the parent and walks there. No free seat → it types in place as before.
+    const anchorAt = anchorTile(parentCh, this.seats);
+    const seatId = anchorAt ? closestFreeSeat(this.seats, anchorAt.col, anchorAt.row) : null;
+    if (seatId) this.seats.get(seatId)!.assigned = true;
+
+    const ch = createCharacter(id, palette, seatId, null, hueShift);
     ch.x = spawn.col * TILE_SIZE + TILE_SIZE / 2;
     ch.y = spawn.row * TILE_SIZE + TILE_SIZE / 2;
     ch.tileCol = spawn.col;
     ch.tileRow = spawn.row;
+    // IDLE + isActive pathfinds to the seat on the first update
+    if (seatId) ch.state = CharacterState.IDLE;
     // Face the same direction as the parent agent
     if (parentCh) ch.dir = parentCh.dir;
     ch.isSubagent = true;
@@ -753,8 +838,117 @@ export class OfficeState {
     this.characters.set(id, ch);
 
     this.subagentIdMap.set(key, id);
-    this.subagentMeta.set(id, { parentAgentId, parentToolId });
+    this.subagentMeta.set(id, { parentAgentId, parentToolId, agentType });
     return id;
+  }
+
+  /** Whether `id` is one of the open project's resident sub-agents. */
+  isResident(id: number): boolean {
+    return this.characters.get(id)?.residentType !== undefined;
+  }
+
+  /** The residents' character ids, bound or not (for the label overlay). */
+  residentIds(): number[] {
+    return [...this.residents.values()];
+  }
+
+  /** The open project's Directory name, whose Area seats its residents. */
+  private residentDirectoryName: string | undefined;
+
+  /**
+   * Seat the open project's resident sub-agents: one character per `types`
+   * entry (its definitions, in file order) at a desk in `directoryName`'s
+   * Area, sitting still until a spawn binds it. Residents no longer listed —
+   * another project opened, or a definition removed — leave; one still bound
+   * to a spawn becomes that spawn's ordinary sub-agent and goes when the spawn
+   * does. A live ordinary sub-agent of a listed type whose parent `inProject`
+   * (spawned while its project was closed) is folded into the new resident.
+   * Returns those folds, old id → resident id, for the React sub list.
+   */
+  setResidents(
+    types: string[],
+    directoryName: string | undefined,
+    inProject: (parentAgentId: number) => boolean,
+  ): Array<{ from: number; to: number }> {
+    this.residentDirectoryName = directoryName;
+    const wanted = new Set(types);
+    for (const [type, id] of this.residents) {
+      if (wanted.has(type)) continue;
+      this.residents.delete(type);
+      const ch = this.characters.get(id);
+      if (!ch) continue;
+      ch.residentType = undefined;
+      if (!this.subagentMeta.has(id)) this.despawnCharacter(ch);
+    }
+
+    const swaps: Array<{ from: number; to: number }> = [];
+    const paletteCount = Math.max(1, getLoadedCharacterCount());
+    types.forEach((type, index) => {
+      if (this.residents.has(type)) return;
+      const seatId = this.findResidentSeat(directoryName);
+      const seat = seatId ? this.seats.get(seatId)! : null;
+      if (seat) seat.assigned = true;
+      // One look per definition, stable while the files are: the palettes in
+      // file order, then the same palettes hue-shifted.
+      const round = Math.floor(index / paletteCount);
+      const hueShift =
+        round === 0 ? 0 : (RESIDENT_HUE_SHIFT_BASE_DEG + round * RESIDENT_HUE_SHIFT_STEP_DEG) % 360;
+      const id = this.nextResidentId--;
+      const ch = createCharacter(id, index % paletteCount, seatId, seat, hueShift);
+      if (!seat) {
+        const spawn = this.walkableTiles[0] ?? { col: 1, row: 1 };
+        ch.x = spawn.col * TILE_SIZE + TILE_SIZE / 2;
+        ch.y = spawn.row * TILE_SIZE + TILE_SIZE / 2;
+        ch.tileCol = spawn.col;
+        ch.tileRow = spawn.row;
+      }
+      ch.isSubagent = true;
+      ch.isActive = false;
+      ch.residentType = type;
+      startMatrixEffect(ch, 'spawn');
+      this.characters.set(id, ch);
+      this.residents.set(type, id);
+
+      for (const [subId, meta] of this.subagentMeta) {
+        const sub = this.characters.get(subId);
+        if (meta.agentType !== type || !sub || sub.residentType !== undefined) continue;
+        if (sub.matrixEffect === 'despawn' || !inProject(meta.parentAgentId)) continue;
+        this.subagentIdMap.set(`${meta.parentAgentId}:${meta.parentToolId}`, id);
+        this.subagentMeta.delete(subId);
+        this.subagentMeta.set(id, meta);
+        ch.parentAgentId = meta.parentAgentId;
+        ch.isActive = sub.isActive;
+        ch.currentTool = sub.currentTool;
+        if (sub.seatId) this.seats.get(sub.seatId)!.assigned = false;
+        this.characters.delete(subId);
+        if (this.selectedAgentId === subId) this.selectedAgentId = id;
+        if (this.cameraFollowId === subId) this.cameraFollowId = id;
+        swaps.push({ from: subId, to: id });
+        break;
+      }
+    });
+    return swaps;
+  }
+
+  /** A resident's spawn ended: it stays at its desk, idle, unbound. */
+  private releaseResident(ch: Character): void {
+    ch.parentAgentId = null;
+    ch.isActive = false;
+    ch.currentTool = null;
+    ch.bubbleType = null;
+  }
+
+  /** Free the seat and play the despawn rain; the effect removes the character. */
+  private despawnCharacter(ch: Character): void {
+    if (ch.matrixEffect === 'despawn') return;
+    if (ch.seatId) {
+      const seat = this.seats.get(ch.seatId);
+      if (seat) seat.assigned = false;
+    }
+    startMatrixEffect(ch, 'despawn');
+    ch.bubbleType = null;
+    if (this.selectedAgentId === ch.id) this.selectedAgentId = null;
+    if (this.cameraFollowId === ch.id) this.cameraFollowId = null;
   }
 
   /** Remove a specific sub-agent character and free its seat */
@@ -764,6 +958,12 @@ export class OfficeState {
     if (id === undefined) return;
 
     const ch = this.characters.get(id);
+    if (ch?.residentType !== undefined) {
+      this.subagentIdMap.delete(key);
+      this.subagentMeta.delete(id);
+      this.releaseResident(ch);
+      return;
+    }
     if (ch) {
       if (ch.matrixEffect === 'despawn') {
         // Already despawning — just clean up maps
@@ -793,6 +993,12 @@ export class OfficeState {
       const meta = this.subagentMeta.get(id);
       if (meta && meta.parentAgentId === parentAgentId) {
         const ch = this.characters.get(id);
+        if (ch?.residentType !== undefined) {
+          this.subagentMeta.delete(id);
+          this.releaseResident(ch);
+          toRemove.push(key);
+          continue;
+        }
         if (ch) {
           if (ch.matrixEffect === 'despawn') {
             // Already despawning — just clean up maps
@@ -844,7 +1050,7 @@ export class OfficeState {
     // Collect tiles where active agents face desks
     const autoOnTiles = new Set<string>();
     for (const ch of this.characters.values()) {
-      if (!ch.isActive || !ch.seatId) continue;
+      if (!ch.isActive || !ch.seatId || this.isHidden(ch.id)) continue;
       const seat = this.seats.get(ch.seatId);
       if (!seat) continue;
       // Find the desk tile(s) the agent faces from their seat
@@ -1195,11 +1401,11 @@ export class OfficeState {
     return seats;
   }
 
-  /** Everything the renderer draws: the agents plus, while the first-run ask
-   *  is up, the consent greeter. This is the ONE place the greeter joins the
+  /** Everything the renderer draws: the current project's agents plus, while
+   *  the first-run ask is up, the consent greeter. This is the ONE place the greeter joins the
    *  agents — every other consumer reads `characters` and gets agents only. */
   getCharacters(): Character[] {
-    const chars = Array.from(this.characters.values());
+    const chars = Array.from(this.characters.values()).filter((ch) => !this.isHidden(ch.id));
     if (this.greeter) chars.push(this.greeter);
     return chars;
   }
@@ -1211,7 +1417,7 @@ export class OfficeState {
     const chars = Array.from(this.characters.values()).sort((a, b) => b.y - a.y);
     for (const ch of chars) {
       // Skip characters that are despawning
-      if (ch.matrixEffect === 'despawn') continue;
+      if (ch.matrixEffect === 'despawn' || this.isHidden(ch.id)) continue;
       // Character sprite is 16x24, anchored bottom-center
       // Apply sitting offset to match visual position
       const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;

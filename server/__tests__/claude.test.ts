@@ -1,5 +1,9 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { describe, expect, it } from 'vitest';
 
+import { normalizeProjectPath } from '../../core/src/normalizeProjectPath.js';
 import { claudeProvider } from '../src/providers/hook/claude/claude.js';
 
 describe('claudeProvider', () => {
@@ -256,6 +260,32 @@ describe('claudeProvider', () => {
     });
     it('handles undefined input', () => {
       expect(claudeProvider.formatToolStatus('Read', undefined)).toBe('Reading ');
+    });
+  });
+
+  describe('getSessionDirs', () => {
+    it('hashes the physical path of a symlinked workspace, as Claude does', () => {
+      const tempDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pxl-sessiondirs-')));
+      try {
+        const real = path.join(tempDir, 'real-project');
+        const link = path.join(tempDir, 'linked-project');
+        fs.mkdirSync(real);
+        fs.symlinkSync(real, link);
+
+        const [dir] = claudeProvider.getSessionDirs!(link);
+
+        expect(path.basename(dir)).toBe(normalizeProjectPath(real));
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it('keeps a path that does not exist as given', () => {
+      const missing = path.join(os.tmpdir(), 'pxl-sessiondirs-missing', 'nope');
+
+      const [dir] = claudeProvider.getSessionDirs!(missing);
+
+      expect(path.basename(dir)).toBe(normalizeProjectPath(missing));
     });
   });
 });

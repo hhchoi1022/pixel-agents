@@ -55,9 +55,9 @@ export function BottomToolbar({
     setIsDrawerOpen(true);
   };
 
-  const handleDirectorySelect = (directory: Directory) => {
+  const handleDirectorySelect = (directory: Directory, resumeSessionId?: string) => {
     setIsDrawerOpen(false);
-    transport.send({ type: 'launchAgent', directoryPath: directory.path });
+    transport.send({ type: 'launchAgent', directoryPath: directory.path, resumeSessionId });
   };
 
   // Standalone can launch agents whenever the server has a working PTY. When it

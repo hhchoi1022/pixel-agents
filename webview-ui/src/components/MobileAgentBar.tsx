@@ -11,7 +11,7 @@ import { isTypingInTerminal } from '../terminal/terminalDom.js';
 import { findTouch, withinTapSlop } from '../touch/touchPrimitives.js';
 import type { AgentAppearance, TabStatus } from './AgentCard.js';
 import { AgentCard } from './AgentCard.js';
-import { cardVariant, mergeOrder, reorderByPointer } from './cardBar.js';
+import { cardVariant, loadCardOrder, mergeOrder, reorderByPointer } from './cardBar.js';
 import { LaunchDrawer } from './LaunchDrawer.js';
 
 interface MobileAgentBarProps {
@@ -25,7 +25,7 @@ interface MobileAgentBarProps {
   onSelectAgent: (agentId: number) => void;
   onCloseAgent: (agentId: number) => void;
   /** Launch into a Directory picked from the + card's drawer. */
-  onLaunchDirectory: (directory: Directory) => void;
+  onLaunchDirectory: (directory: Directory, resumeSessionId?: string) => void;
   /** Directories offered by the launch drawer (tap on the + card). */
   directories: Directory[];
   /** Drawer's pinned `+ Directory` row — opens the Directory modal empty. */
@@ -37,17 +37,6 @@ interface MobileAgentBarProps {
   launchUnavailableReason: string | null;
   getAppearance: (agentId: number) => AgentAppearance;
   statusFor: (agentId: number) => TabStatus | null;
-}
-
-/** Saved order from localStorage; [] on first run or unparseable junk. */
-function loadSavedOrder(): number[] {
-  try {
-    const raw = localStorage.getItem(MOBILE_CARD_ORDER_STORAGE_KEY);
-    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
-    return Array.isArray(parsed) ? parsed.filter((v): v is number => typeof v === 'number') : [];
-  } catch {
-    return [];
-  }
 }
 
 /** Long-press drag state. 'pending' = timer armed, finger must stay within the
@@ -93,7 +82,9 @@ export function MobileAgentBar({
   getAppearance,
   statusFor,
 }: MobileAgentBarProps) {
-  const [savedOrder, setSavedOrder] = useState<number[]>(loadSavedOrder);
+  const [savedOrder, setSavedOrder] = useState<number[]>(() =>
+    loadCardOrder(MOBILE_CARD_ORDER_STORAGE_KEY),
+  );
   const displayIds = useMemo(() => mergeOrder(savedOrder, agentIds), [savedOrder, agentIds]);
   const [draggingId, setDraggingId] = useState<number | null>(null);
 
@@ -299,9 +290,9 @@ export function MobileAgentBar({
           <LaunchDrawer
             isOpen={isLaunchDrawerOpen}
             directories={directories}
-            onSelect={(directory) => {
+            onSelect={(directory, resumeSessionId) => {
               setIsLaunchDrawerOpen(false);
-              onLaunchDirectory(directory);
+              onLaunchDirectory(directory, resumeSessionId);
             }}
             onAddDirectory={() => {
               setIsLaunchDrawerOpen(false);

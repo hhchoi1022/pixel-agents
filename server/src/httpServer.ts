@@ -18,6 +18,7 @@ import {
   WS_CLOSE_FORBIDDEN_ORIGIN,
   WS_CLOSE_UNAUTHORIZED,
 } from './constants.js';
+import { agentProjectFolder } from './directories.js';
 import type { PtySessionManager } from './terminal/ptySessionManager.js';
 import { registerTerminalRoutes } from './terminal/terminalRoutes.js';
 import type { AgentState } from './types.js';
@@ -224,6 +225,7 @@ function registerWebSocketRoute(
         type: 'agentCreated',
         id,
         directoryName: agent.directoryName,
+        projectPath: agentProjectFolder(agent),
         isExternal: agent.isExternal || undefined,
         isTeammate: agent.leadAgentId !== undefined || undefined,
         teammateName: agent.agentName,

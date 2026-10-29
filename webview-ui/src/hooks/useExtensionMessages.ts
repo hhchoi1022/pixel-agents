@@ -2,10 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { HooksConsentRequest } from '../../../core/src/messages.js';
 import { playDoneSound, playPermissionSound, setSoundEnabled } from '../notificationSound.js';
+import { setBridgeOps } from '../office/engine/bridgeFeeds.js';
 import type { ExistingAgentMeta, PendingAgent } from '../office/engine/existingAgents.js';
 import { reconcileExistingAgents } from '../office/engine/existingAgents.js';
 import type { OfficeState } from '../office/engine/officeState.js';
 import { setGhostHeadlessAgents as setRendererGhostHeadlessAgents } from '../office/engine/renderer.js';
+import { setSystemStats } from '../office/engine/serverRoom.js';
+import { setPipelineStatus } from '../office/engine/statusBoard.js';
+import { setWebPages } from '../office/engine/webPages.js';
 import { setFloorSprites } from '../office/floorTiles.js';
 import { buildDynamicCatalog } from '../office/layout/furnitureCatalog.js';
 import { migrateLayoutColors } from '../office/layout/layoutSerializer.js';
@@ -38,6 +42,8 @@ export interface SubagentCharacter {
   parentAgentId: number;
   parentToolId: string;
   label: string;
+  /** The spawn's agent type (e.g. "ezphot-qa") — the Sub-agent's name. */
+  agentType?: string;
 }
 
 interface FurnitureAsset {
@@ -111,6 +117,14 @@ interface ExtensionMessageState {
   /** Paths the host recovered from past sessions, offered as taps in the
    *  Directory modal. Refreshed every time the modal asks. */
   directorySuggestions: string[];
+  /** The project Directories' paths the office can switch between
+   *  (projectsLoaded), null until the host says. */
+  projectPaths: string[] | null;
+  /** The open project (projectsLoaded.current); null when none is picked. */
+  currentProject: string | null;
+  /** Agent id → the project Directory it belongs to (agentCreated.projectPath);
+   *  agents outside every project (the superagent) have no entry. */
+  agentProjects: Record<number, string>;
   /** Distinct directoryNames seen across agents this session — source for the Areas Directory dropdown. */
   agentDirectoryNames: string[];
   externalAssetDirectories: string[];
@@ -198,6 +212,9 @@ export function useExtensionMessages(
   const [directoryRejection, setDirectoryRejection] = useState<DirectoryRejection | null>(null);
   const [directorySaved, setDirectorySaved] = useState<DirectorySaved | null>(null);
   const [directorySuggestions, setDirectorySuggestions] = useState<string[]>([]);
+  const [projectPaths, setProjectPaths] = useState<string[] | null>(null);
+  const [currentProject, setCurrentProject] = useState<string | null>(null);
+  const [agentProjects, setAgentProjects] = useState<Record<number, string>>({});
   const [agentDirectoryNames, setAgentDirectoryNames] = useState<string[]>([]);
   const [externalAssetDirectories, setExternalAssetDirectories] = useState<string[]>([]);
   const [lastSeenVersion, setLastSeenVersion] = useState('');
@@ -244,9 +261,36 @@ export function useExtensionMessages(
   // character to a new tile every turn. Cleared by subagentClear/agentClosed.
   const backgroundParentToolIdsRef = useRef<Record<number, Set<string>>>({});
 
+  // The handler below is bound once, so a teammate reads its lead's project
+  // through this mirror rather than a stale closure.
+  const agentProjectsRef = useRef(agentProjects);
+  agentProjectsRef.current = agentProjects;
+
   useEffect(() => {
     // Buffer agents from existingAgents until layout is loaded
     let pendingAgents: PendingAgent[] = [];
+
+    // The open project and its own sub-agents (projectsLoaded). Residents are
+    // seated only once the layout is built, after the restored agents, so those
+    // keep their persisted seats.
+    let openProject: string | null = null;
+    let residentTypes: string[] = [];
+    let knownDirectories: Directory[] = [];
+    const applyResidents = (os: OfficeState) => {
+      const directoryName = knownDirectories.find((d) => d.path === openProject)?.name;
+      const swaps = os.setResidents(
+        residentTypes,
+        directoryName,
+        (parentId) => openProject !== null && agentProjectsRef.current[parentId] === openProject,
+      );
+      if (swaps.length === 0) return;
+      setSubagentCharacters((prev) =>
+        prev.map((s) => {
+          const swap = swaps.find((w) => w.from === s.id);
+          return swap ? { ...s, id: swap.to } : s;
+        }),
+      );
+    };
 
     // Accumulate distinct directoryNames seen across agents (never removed during the
     // session): the source for the Areas Directory-mapping dropdown, so a Directory stays
@@ -278,6 +322,26 @@ export function useExtensionMessages(
           toolId: msg.toolId,
           parentToolId: msg.parentToolId,
         });
+      }
+
+      if (msg.type === 'webPagesStatus') {
+        setWebPages(msg);
+        return;
+      }
+
+      if (msg.type === 'pipelineStatus') {
+        setPipelineStatus(msg);
+        return;
+      }
+
+      if (msg.type === 'bridgeOpsStatus') {
+        setBridgeOps(msg);
+        return;
+      }
+
+      if (msg.type === 'systemStats') {
+        setSystemStats(msg);
+        return;
       }
 
       if (msg.type === 'providerCapabilities') {
@@ -334,6 +398,7 @@ export function useExtensionMessages(
           if (p.isHeadless) os.setHeadless(p.id, true);
         }
         pendingAgents = [];
+        applyResidents(os);
         layoutReadyRef.current = true;
         setLayoutReady(true);
         if (msg.wasReset) {
@@ -349,6 +414,12 @@ export function useExtensionMessages(
         const teammateName = msg.teammateName as string | undefined;
         const teammateParentId = msg.parentAgentId as number | undefined;
         const teamName = msg.teamName as string | undefined;
+        // A teammate works in its lead's project even when its own transcript
+        // folder says nothing.
+        const projectPath =
+          (msg.projectPath as string | undefined) ??
+          (teammateParentId !== undefined ? agentProjectsRef.current[teammateParentId] : undefined);
+        if (projectPath) setAgentProjects((prev) => ({ ...prev, [id]: projectPath }));
         setAgents((prev) => (prev.includes(id) ? prev : [...prev, id]));
         // Don't auto-select teammates (keep focus on lead)
         if (!isTeammate) {
@@ -400,6 +471,7 @@ export function useExtensionMessages(
         setAgentStatuses((prev) => omitKey(prev, id));
         setAgentAwaitingInput((prev) => omitKey(prev, id));
         setAgentSeenActivity((prev) => omitKey(prev, id));
+        setAgentProjects((prev) => omitKey(prev, id));
         setSubagentTools((prev) => omitKey(prev, id));
         // Remove all sub-agent characters belonging to this agent
         delete backgroundParentToolIdsRef.current[id];
@@ -410,6 +482,8 @@ export function useExtensionMessages(
         const incoming = msg.agents as number[];
         const meta = (msg.agentMeta || {}) as Record<number, ExistingAgentMeta>;
         const directoryNames = (msg.directoryNames || {}) as Record<number, string>;
+        const incomingProjects = (msg.projectPaths || {}) as Record<number, string>;
+        setAgentProjects((prev) => ({ ...prev, ...incomingProjects }));
         const externalAgents = (msg.externalAgents || {}) as Record<number, boolean>;
         const headlessAgents: Record<number, boolean> = {};
         for (const id of incoming) {
@@ -491,10 +565,28 @@ export function useExtensionMessages(
           (!runInBackground || !parentHasTeam)
         ) {
           const label = status.startsWith('Subtask:') ? status.slice('Subtask:'.length).trim() : '';
-          const subId = os.addSubagent(id, toolId);
+          const agentType = msg.subagentType as string | undefined;
+          const inOpenProject =
+            openProject !== null && agentProjectsRef.current[id] === openProject;
+          const subId = os.addSubagent(id, toolId, agentType, inOpenProject);
           setSubagentCharacters((prev) => {
-            if (prev.some((s) => s.id === subId)) return prev;
-            return [...prev, { id: subId, parentAgentId: id, parentToolId: toolId, label }];
+            const existing = prev.find((s) => s.id === subId);
+            // A resident is re-bound spawn after spawn under the same id, so an
+            // entry left from an earlier spawn is replaced, not kept.
+            if (!existing || existing.parentAgentId !== id || existing.parentToolId !== toolId) {
+              return [
+                ...prev.filter((s) => s.id !== subId),
+                { id: subId, parentAgentId: id, parentToolId: toolId, label, agentType },
+              ];
+            }
+            // A sub created lazily by subagentToolStart has neither; fill them in
+            // from the re-sent spawn.
+            if ((existing.label || !label) && (existing.agentType || !agentType)) return prev;
+            return prev.map((s) =>
+              s.id === subId
+                ? { ...s, label: s.label || label, agentType: s.agentType ?? agentType }
+                : s,
+            );
           });
         }
       } else if (msg.type === 'agentToolDone') {
@@ -729,9 +821,16 @@ export function useExtensionMessages(
         os.setAreaMappings(mappings);
       } else if (msg.type === 'directoriesLoaded') {
         const directories = msg.directories as Directory[];
+        knownDirectories = directories;
         setDirectories(directories);
       } else if (msg.type === 'directorySuggestions') {
         setDirectorySuggestions((msg.paths ?? []) as string[]);
+      } else if (msg.type === 'projectsLoaded') {
+        setProjectPaths((msg.paths ?? []) as string[]);
+        openProject = typeof msg.current === 'string' ? msg.current : null;
+        setCurrentProject(openProject);
+        residentTypes = (msg.subagents ?? []) as string[];
+        if (layoutReadyRef.current) applyResidents(os);
       } else if (msg.type === 'directorySaved') {
         const directory = msg.directory as Directory;
         setDirectorySaved((prev) => ({ directory, seq: (prev?.seq ?? 0) + 1 }));
@@ -883,6 +982,9 @@ export function useExtensionMessages(
     directoryRejection,
     directorySaved,
     directorySuggestions,
+    projectPaths,
+    currentProject,
+    agentProjects,
     agentDirectoryNames,
     externalAssetDirectories,
     lastSeenVersion,

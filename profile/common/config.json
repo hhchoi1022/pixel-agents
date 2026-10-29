@@ -1,0 +1,24 @@
+{
+  "vscode": {
+    "soundEnabled": true,
+    "lastSeenVersion": "",
+    "alwaysShowLabels": false,
+    "ghostHeadlessAgents": false,
+    "watchAllSessions": false,
+    "hooksInfoShown": false,
+    "showAreas": true,
+    "bypassPermissions": false,
+    "showHostDirectories": false
+  },
+  "standalone": {
+    "soundEnabled": true,
+    "lastSeenVersion": "1.5",
+    "alwaysShowLabels": true,
+    "ghostHeadlessAgents": false,
+    "watchAllSessions": false,
+    "hooksInfoShown": true,
+    "showAreas": false,
+    "bypassPermissions": false,
+    "showHostDirectories": false
+  }
+}

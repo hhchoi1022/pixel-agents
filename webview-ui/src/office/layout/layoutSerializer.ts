@@ -225,6 +225,7 @@ export function layoutToSeats(furniture: PlacedFurniture[]): Map<string, Seat> {
           seatRow: tileRow,
           facingDir,
           assigned: false,
+          pinned: item.pinned === true,
         });
         seatCount++;
       }

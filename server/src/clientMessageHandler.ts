@@ -14,9 +14,12 @@ import {
 } from './configPersistence.js';
 import { HUE_SHIFT_MAX_DEG, PALETTE_COUNT, TERMINAL_REQUIRES_TOKEN_REASON } from './constants.js';
 import {
+  agentProjectFolder,
   handleDirectoryClientMessage,
   type HostDirectoryEntry,
   listDirectories,
+  projectsMessage,
+  setCurrentProject,
 } from './directories.js';
 import { collectDirectorySuggestions } from './directorySuggestions.js';
 import { hostDirectory } from './hostDirectory.js';
@@ -25,6 +28,7 @@ import type { ConsentEffects } from './providers/hook/consentExecutor.js';
 import { applyConsentChoice } from './providers/hook/consentExecutor.js';
 import { hooksConsentRequest } from './providers/hook/consentGate.js';
 import { claudeProvider, hookProviderById, hookProviders } from './providers/index.js';
+import { listResumableSessions } from './resumableSessions.js';
 import type { PtySessionManager } from './terminal/ptySessionManager.js';
 import { launchStandaloneAgent } from './terminal/standaloneAgentLauncher.js';
 
@@ -151,6 +155,8 @@ export function handleClientMessage(
         { store, runtime, ptyManager: ctx.ptyManager, provider: claudeProvider },
         {
           directoryPath: msg.directoryPath as string | undefined,
+          resumeSessionId:
+            typeof msg.resumeSessionId === 'string' ? msg.resumeSessionId : undefined,
           bypassPermissions: adapter?.getSetting(KEY_BYPASS_PERMISSIONS, false) ?? false,
         },
       );
@@ -352,11 +358,43 @@ export function handleClientMessage(
       // suggestion list — answers only the client that asked.
       handleDirectoryClientMessage(msg, {
         hostDirectories: () => shownHostDirectoriesFor(ctx),
-        broadcast: (message) => store.broadcast(message),
+        broadcast: (message) => {
+          store.broadcast(message);
+          // Directories are the projects, so an edit can change the switcher too.
+          store.broadcast(projectsMessage());
+        },
         reply: send,
         suggestions: () =>
           collectDirectorySuggestions(claudeProvider, shownHostDirectoriesFor(ctx)),
       });
+      break;
+
+    case 'requestResumableSessions':
+      // Answered only to the office that asked: the list feeds one open drawer.
+      // Resuming is a launchAgent carrying the picked session's id.
+      send({
+        type: 'resumableSessions',
+        sessions: listResumableSessions(
+          claudeProvider,
+          listDirectories(shownHostDirectoriesFor(ctx)),
+          new Set([...store.values()].map((agent) => agent.sessionId)),
+        ),
+      });
+      break;
+
+    case 'requestProjects':
+      // Answered only to the office that asked: a menu opening re-reads the list.
+      send(projectsMessage());
+      break;
+
+    case 'setCurrentProject':
+      // Every office follows the switch; a refused one (no such project, or the
+      // write failed) puts the asker back on the project that is still open.
+      if (typeof msg.path === 'string' && setCurrentProject(msg.path)) {
+        store.broadcast(projectsMessage());
+      } else {
+        send(projectsMessage());
+      }
       break;
 
     default:
@@ -576,6 +614,9 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
       type: 'directoriesLoaded',
       directories: listDirectories(shownHostDirectoriesFor(ctx)),
     });
+    // 4d. Projects (the Directories) and the open one, before existingAgents
+    // so another project's agents are hidden from their first frame.
+    send(projectsMessage());
   }
 
   // Sync runtime refs with the persisted settings so scanners behave correctly
@@ -591,6 +632,7 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
   // 6. Existing agents (either just restored, or from VS Code adapter if present)
   const agentIds: number[] = [];
   const directoryNames: Record<number, string> = {};
+  const projectPaths: Record<number, string> = {};
   const externalAgents: Record<number, boolean> = {};
   const persistedSeats = adapter?.loadSeats() ?? {};
   const agentMeta: Record<number, { palette?: number; hueShift?: number; seatId?: string }> = {};
@@ -598,6 +640,10 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
     agentIds.push(id);
     if (agent.directoryName) {
       directoryNames[id] = agent.directoryName;
+    }
+    const projectPath = agentProjectFolder(agent);
+    if (projectPath) {
+      projectPaths[id] = projectPath;
     }
     if (agent.isExternal) {
       externalAgents[id] = true;
@@ -614,6 +660,7 @@ function handleWebviewReady(send: WsSend, ctx: ClientMessageContext): void {
     agents: agentIds,
     agentMeta,
     directoryNames,
+    projectPaths,
     externalAgents,
   });
 
@@ -716,6 +763,9 @@ function refuseReadOnly(
       return;
     case 'saveAreaMappings':
       send({ type: 'areaMappingsLoaded', mappings: readConfig().standalone.areaMappings ?? {} });
+      return;
+    case 'setCurrentProject':
+      send(projectsMessage());
       return;
   }
 }

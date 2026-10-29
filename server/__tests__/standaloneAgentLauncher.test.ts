@@ -12,6 +12,30 @@ import type { IPty, PtyModule, PtySpawnOptions } from '../src/terminal/ptyModule
 import { PtySessionManager } from '../src/terminal/ptySessionManager.js';
 import { launchStandaloneAgent } from '../src/terminal/standaloneAgentLauncher.js';
 
+// Projects are read from the user's real ~/.pixel-agents/config.json; pin them
+// so the launched command doesn't depend on the machine running the test.
+const projects = vi.hoisted(() => ({
+  list: [] as Array<{ name: string; path: string }>,
+  superagent: undefined as string | undefined,
+  current: undefined as string | undefined,
+}));
+vi.mock('../src/directories.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/directories.js')>()),
+  listProjects: () => projects.list,
+  projectAt: (p: string) => projects.list.find((project) => project.path === p),
+  isSuperagentDirectory: (p: string) => p === projects.superagent,
+  currentProjectFolder: () => projects.current,
+  setCurrentProject: (p: string) => {
+    projects.current = p;
+    return true;
+  },
+  projectsMessage: () => ({
+    type: 'projectsLoaded',
+    paths: projects.list.map((project) => project.path),
+    current: projects.current,
+  }),
+}));
+
 /**
  * launchStandaloneAgent is the standalone counterpart of the VS Code adapter's
  * launchNewTerminal: it must register a store agent, spawn the provider's
@@ -96,6 +120,9 @@ describe('launchStandaloneAgent', () => {
   });
 
   afterEach(() => {
+    projects.list = [];
+    projects.superagent = undefined;
+    projects.current = undefined;
     vi.useRealTimers();
     runtime.dispose();
     store.dispose();
@@ -146,6 +173,123 @@ describe('launchStandaloneAgent', () => {
     launch(harness, { bypassPermissions: true });
 
     expect(harness.spawnArgs[0].args).toContain('--dangerously-skip-permissions');
+  });
+
+  it('names a project lead after its project and opens that project', () => {
+    const harness = workingPtyManager();
+    const cwd = path.join(tempDir, 'ezphot dev');
+    fs.mkdirSync(cwd);
+    projects.list = [{ name: 'ezphot dev', path: cwd }];
+    projects.current = path.join(tempDir, 'BRIDGE');
+
+    launch(harness, { directoryPath: cwd });
+
+    const agent = store.get(1);
+    // A lead gets a name to be found by, and no prompt: its harness runs it.
+    expect(harness.spawnArgs[0].args).toEqual([
+      '--session-id',
+      agent?.sessionId,
+      '--name',
+      `ezphot-dev/lead-${agent?.sessionId.slice(0, 4)}`,
+    ]);
+    expect(agent?.projectPath).toBe(cwd);
+    expect(broadcasts).toContainEqual({ type: 'projectsLoaded', paths: [cwd], current: cwd });
+  });
+
+  it('tells the superagent where the project leads are, and leaves it in no project', () => {
+    const harness = workingPtyManager();
+    const cwd = path.join(tempDir, 'superagent');
+    fs.mkdirSync(cwd);
+    projects.superagent = cwd;
+    projects.list = [
+      { name: 'BRIDGE', path: path.join(tempDir, 'BRIDGE') },
+      { name: 'ezphot', path: path.join(tempDir, 'ezphot') },
+    ];
+
+    launch(harness, { directoryPath: cwd });
+
+    const agent = store.get(1);
+    const sessionName = `superagent-${agent?.sessionId.slice(0, 4)}`;
+    const args = harness.spawnArgs[0].args;
+    expect(args.slice(0, 5)).toEqual([
+      '--session-id',
+      agent?.sessionId,
+      '--name',
+      sessionName,
+      '--append-system-prompt',
+    ]);
+    expect(args[5]).toContain(`"${sessionName}"`);
+    expect(args[5]).toContain('named "<project>/lead-<id>"; the projects are "BRIDGE", "ezphot"');
+    expect(agent?.projectPath).toBeUndefined();
+    expect(broadcasts.some((m) => m.type === 'projectsLoaded')).toBe(false);
+  });
+
+  // ── Resume ───────────────────────────────────────────────────
+
+  const RESUME_ID = 'e89e6c6b-114f-4a72-9fc1-58389571189e';
+
+  function resume(harness: PtyHarness, overrides: Partial<HookProvider> = {}): number | null {
+    return launchStandaloneAgent(
+      {
+        store,
+        runtime,
+        ptyManager: harness.manager,
+        provider: provider({ getLiveSessionIds: () => new Set(), ...overrides }),
+      },
+      { resumeSessionId: RESUME_ID },
+    );
+  }
+
+  it('resumes a closed session under its own id, watching from the end of its transcript', () => {
+    const harness = workingPtyManager();
+    const transcript = path.join(projectDir, `${RESUME_ID}.jsonl`);
+    fs.writeFileSync(transcript, '{"type":"user"}\n{"type":"assistant"}\n');
+    // Its previous agent's close dismissed the transcript.
+    runtime.dismissalTracker.dismiss(transcript);
+    projects.list = [{ name: 'BRIDGE', path: process.cwd() }];
+
+    const id = resume(harness);
+
+    const agent = store.get(id!)!;
+    expect(agent.sessionId).toBe(RESUME_ID);
+    expect(agent.jsonlFile).toBe(transcript);
+    expect(agent.fileOffset).toBe(fs.statSync(transcript).size);
+    expect(runtime.dismissalTracker.isDismissed(transcript)).toBe(false);
+    // Same id, so the same name the superagent already knows.
+    expect(harness.spawnArgs[0].args).toEqual([
+      '--resume',
+      RESUME_ID,
+      '--name',
+      'BRIDGE/lead-e89e',
+    ]);
+  });
+
+  it.each([
+    ['a session id that is not one', { id: 'not-a-uuid' }],
+    ['a session already in the office', { inOffice: true }],
+    ['a session running in another terminal', { liveElsewhere: true }],
+    ['a session with no transcript in the Directory', { noTranscript: true }],
+  ])('refuses to resume %s', (_label, setup: Record<string, unknown>) => {
+    const harness = workingPtyManager();
+    if (!setup.noTranscript) fs.writeFileSync(path.join(projectDir, `${RESUME_ID}.jsonl`), '{}\n');
+    if (setup.inOffice) launch(harness);
+    if (setup.inOffice) store.get(1)!.sessionId = RESUME_ID;
+    const before = store.nextAgentId.current;
+
+    const id = launchStandaloneAgent(
+      {
+        store,
+        runtime,
+        ptyManager: harness.manager,
+        provider: provider({
+          getLiveSessionIds: () => new Set(setup.liveElsewhere ? [RESUME_ID] : []),
+        }),
+      },
+      { resumeSessionId: (setup.id as string | undefined) ?? RESUME_ID },
+    );
+
+    expect(id).toBeNull();
+    expect(store.nextAgentId.current).toBe(before);
   });
 
   // ── Refusal paths (each must leave the store and id counter untouched) ──

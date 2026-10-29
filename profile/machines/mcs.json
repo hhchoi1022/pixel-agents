@@ -1,0 +1,17 @@
+{
+  "directories": [],
+  "areaMappings": {
+    "vscode": {},
+    "standalone": {}
+  },
+  "externalAssetDirectories": [],
+  "serverRoom": {
+    "name": "MCS",
+    "mounts": [],
+    "remotes": []
+  },
+  "projectDisplays": {
+    "projects": {}
+  },
+  "ports": []
+}

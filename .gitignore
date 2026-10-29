@@ -50,3 +50,7 @@ agent-orchestrator.yaml
 .ao/
 .serena/
 tasks/
+# Local layout work: backups and one-off apply scripts (machine paths).
+# The latest generator is kept; the live layout travels in profile/.
+layouts/*
+!layouts/gen_layout_v16.py

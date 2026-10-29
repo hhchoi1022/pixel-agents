@@ -98,9 +98,19 @@ export function updateCharacter(
   blockedTiles: Set<string>,
 ): void {
   ch.frameTimer += dt;
+  // A resident sub-agent waits at its desk like an agent on a pinned chair.
+  const pinned =
+    ch.residentType !== undefined || (ch.seatId ? seats.get(ch.seatId)?.pinned === true : false);
 
   switch (ch.state) {
     case CharacterState.TYPE: {
+      // Pinned chair: an idle agent just sits still (no typing frames, no wandering)
+      if (!ch.isActive && pinned) {
+        ch.frame = 0;
+        ch.frameTimer = 0;
+        ch.seatTimer = 0;
+        break;
+      }
       if (ch.frameTimer >= TYPE_FRAME_DURATION_SEC) {
         ch.frameTimer -= TYPE_FRAME_DURATION_SEC;
         ch.frame = (ch.frame + 1) % 2;
@@ -165,7 +175,7 @@ export function updateCharacter(
       ch.wanderTimer -= dt;
       if (ch.wanderTimer <= 0) {
         // Check if we've wandered enough — return to seat for a rest
-        if (ch.wanderCount >= ch.wanderLimit && ch.seatId) {
+        if ((ch.wanderCount >= ch.wanderLimit || pinned) && ch.seatId) {
           const seat = seats.get(ch.seatId);
           if (seat) {
             const path = findPath(
@@ -186,7 +196,7 @@ export function updateCharacter(
             }
           }
         }
-        if (walkableTiles.length > 0) {
+        if (!pinned && walkableTiles.length > 0) {
           const target = walkableTiles[Math.floor(Math.random() * walkableTiles.length)];
           const path = findPath(
             ch.tileCol,

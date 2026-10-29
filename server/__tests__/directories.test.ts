@@ -5,13 +5,21 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { readConfig } from '../src/configPersistence.js';
 import {
+  agentProjectFolder,
   buildDirectoryUnion,
+  currentProjectFolder,
   directoryNameForLaunch,
   expandTilde,
   handleDirectoryClientMessage,
+  isSuperagentDirectory,
   listDirectories,
+  listProjects,
+  projectAt,
+  projectFolderFor,
+  projectsMessage,
   removeUserDirectory,
   saveUserDirectory,
+  setCurrentProject,
   validateDirectoryPath,
 } from '../src/directories.js';
 
@@ -349,6 +357,78 @@ describe('directories', () => {
 
     it('is undefined for a path that is no Directory, so the host keeps its own label', () => {
       expect(directoryNameForLaunch(alpha, [{ name: 'beta', path: beta }])).toBeUndefined();
+    });
+  });
+
+  describe('projects', () => {
+    /** alpha and beta are projects; the superagent's Directory is none. */
+    let hub: string;
+    beforeEach(() => {
+      hub = path.join(tempHome, 'hub');
+      fs.mkdirSync(hub);
+      expect(saveUserDirectory({ name: 'BETA', path: beta }).ok).toBe(true);
+      expect(saveUserDirectory({ name: 'alpha', path: alpha }).ok).toBe(true);
+      expect(saveUserDirectory({ name: 'superagent', path: hub }).ok).toBe(true);
+    });
+    const transcriptDirFor = (cwd: string) =>
+      path.join(tempHome, '.claude', 'projects', cwd.replace(/[^a-zA-Z0-9-]/g, '-'));
+
+    it('are the Directories other than the superagent, by name', () => {
+      expect(listProjects()).toEqual([
+        { name: 'alpha', path: alpha },
+        { name: 'BETA', path: beta },
+      ]);
+      expect(projectAt(`${beta}${path.sep}`)).toEqual({ name: 'BETA', path: beta });
+      expect(projectAt(hub)).toBeUndefined();
+      expect(isSuperagentDirectory(hub)).toBe(true);
+      expect(isSuperagentDirectory(alpha)).toBe(false);
+    });
+
+    it('opens one project at a time, and only a project', () => {
+      expect(currentProjectFolder()).toBeUndefined();
+      expect(setCurrentProject(beta)).toBe(true);
+      expect(currentProjectFolder()).toBe(beta);
+      expect(projectsMessage()).toEqual({
+        type: 'projectsLoaded',
+        paths: [alpha, beta],
+        current: beta,
+      });
+      expect(setCurrentProject(hub)).toBe(false);
+      expect(setCurrentProject(path.join(tempHome, 'nowhere'))).toBe(false);
+      expect(currentProjectFolder()).toBe(beta);
+    });
+
+    it('closes the open project when its Directory goes away', () => {
+      setCurrentProject(beta);
+      removeUserDirectory(beta);
+      expect(currentProjectFolder()).toBeUndefined();
+      expect(readConfig().currentProject).toBe(beta);
+    });
+
+    it('names the project an agent ran in, never the superagent', () => {
+      expect(projectFolderFor(transcriptDirFor(alpha))).toBe(alpha);
+      expect(projectFolderFor(transcriptDirFor(beta))).toBe(beta);
+      expect(projectFolderFor(transcriptDirFor(hub))).toBeUndefined();
+      expect(projectFolderFor(transcriptDirFor(path.join(alpha, 'nested')))).toBeUndefined();
+      expect(projectFolderFor('')).toBeUndefined();
+    });
+
+    it('matches through a symlinked Directory (Claude hashes the physical cwd)', () => {
+      const link = path.join(tempHome, 'linked-alpha');
+      fs.symlinkSync(alpha, link);
+      removeUserDirectory(alpha);
+      saveUserDirectory({ name: 'alpha', path: link });
+      // validateDirectoryPath keeps the path as typed, so the link is what's stored.
+      expect(projectFolderFor(transcriptDirFor(alpha))).toBe(link);
+    });
+
+    it('prefers the project stamped at launch over where the session ran', () => {
+      const elsewhere = path.join(tempHome, 'elsewhere');
+      expect(
+        agentProjectFolder({ projectPath: beta, projectDir: transcriptDirFor(elsewhere) }),
+      ).toBe(beta);
+      expect(agentProjectFolder({ projectDir: transcriptDirFor(alpha) })).toBe(alpha);
+      expect(agentProjectFolder({ projectDir: transcriptDirFor(elsewhere) })).toBeUndefined();
     });
   });
 });

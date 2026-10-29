@@ -1,5 +1,6 @@
 import type { Terminal } from '@xterm/xterm';
 
+import { TERMINAL_COPY_FALLBACK_MS, TERMINAL_COPY_FALLBACK_TOP_PX } from '../constants.js';
 import { writeClipboardText } from './clipboard.js';
 import { clipboardKeyAction, decodeOsc52 } from './clipboardKeys.js';
 import { terminalCopyText } from './flowCopy.js';
@@ -25,6 +26,8 @@ export function attachClipboardInput(
   opts: {
     /** Only the pane on screen may write the clipboard from OSC 52. */
     isActive: () => boolean;
+    /** Where to offer a click-to-copy pill when the browser refuses an OSC 52 write. */
+    host?: HTMLElement;
   },
 ): () => void {
   const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
@@ -54,14 +57,46 @@ export function attachClipboardInput(
 
   // Plain-http origins fall back to a copy event, which works only while the
   // triggering key press still counts as a user gesture (writeClipboardText).
+  // Safari refuses both paths here: an OSC 52 write arrives over the socket,
+  // long after any user gesture. Then a one-click pill offers the copy, since
+  // its click IS a gesture (Claude Code's own drag-select copies this way).
+  let fallbackPill: { remove: () => void } | null = null;
   const osc = term.parser.registerOscHandler(OSC_CLIPBOARD, (data) => {
     const text = opts.isActive() ? decodeOsc52(data) : null;
-    if (text !== null) void writeClipboardText(text);
+    if (text !== null) {
+      void writeClipboardText(text).then((ok) => {
+        if (ok || !opts.host) return;
+        fallbackPill?.remove();
+        fallbackPill = showCopyFallbackPill(opts.host, text);
+      });
+    }
     return true;
   });
 
   return () => {
     term.attachCustomKeyEventHandler(() => true);
     osc.dispose();
+    fallbackPill?.remove();
   };
+}
+
+/** A "Copy" pill over the pane top that writes `text` on click, then goes away. */
+function showCopyFallbackPill(host: HTMLElement, text: string): { remove: () => void } {
+  const pill = document.createElement('div');
+  pill.className = 'terminal-copy-pill';
+  pill.style.left = '50%';
+  pill.style.top = `${String(TERMINAL_COPY_FALLBACK_TOP_PX)}px`;
+  const button = document.createElement('button');
+  button.textContent = 'Copy selection';
+  pill.appendChild(button);
+  const remove = () => {
+    clearTimeout(timer);
+    pill.remove();
+  };
+  button.addEventListener('click', () => {
+    void writeClipboardText(text).then(remove);
+  });
+  const timer = setTimeout(remove, TERMINAL_COPY_FALLBACK_MS);
+  host.appendChild(pill);
+  return { remove };
 }

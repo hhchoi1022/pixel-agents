@@ -29,6 +29,7 @@ import {
   removeFurniture,
   renameArea,
   rotateFurniture,
+  setFurniturePinned,
   toggleFurnitureState,
   updateAreaColor,
   wallStrokeAdds,
@@ -69,6 +70,8 @@ interface EditorActions extends Omit<FurnitureColorActions, 'pickColorAt'> {
   handleDeleteSelected: () => void;
   handleRotateSelected: () => void;
   handleToggleState: () => void;
+  /** Pin/unpin the selected chair (its agent stays put when idle). */
+  handleSelectedFurniturePinnedChange: (pinned: boolean) => void;
   handleUndo: () => void;
   handleRedo: () => void;
   handleReset: () => void;
@@ -456,6 +459,15 @@ export function useEditorActions(
     }
   }, [getOfficeState, editorState, applyEdit, bumpTick]);
 
+  const handleSelectedFurniturePinnedChange = useCallback(
+    (pinned: boolean) => {
+      const uid = editorState.selectedFurnitureUid;
+      if (!uid) return;
+      applyEdit(setFurniturePinned(getOfficeState().getLayout(), uid, pinned));
+    },
+    [getOfficeState, editorState, applyEdit],
+  );
+
   const handleUndo = useCallback(() => {
     const prev = editorState.popUndo();
     if (!prev) return;
@@ -769,6 +781,7 @@ export function useEditorActions(
     handleDeleteSelected,
     handleRotateSelected,
     handleToggleState,
+    handleSelectedFurniturePinnedChange,
     handleUndo,
     handleRedo,
     handleReset,

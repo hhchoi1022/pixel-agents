@@ -988,13 +988,15 @@ describe('clientMessageHandler: standalone terminal control plane', () => {
         directory: { name: 'Side Project', path: target, source: 'user' },
       },
     ]);
-    expect(broadcasts).toHaveLength(1);
+    expect(broadcasts).toHaveLength(2);
     expect(broadcasts[0].type).toBe('directoriesLoaded');
     expect(broadcasts[0].directories).toContainEqual({
       name: 'Side Project',
       path: target,
       source: 'user',
     });
+    // A Directory is a project, so the switcher's list follows.
+    expect(broadcasts[1]).toEqual({ type: 'projectsLoaded', paths: [target], current: undefined });
     expect(readConfig().directories).toEqual([{ name: 'Side Project', path: target }]);
   });
 
@@ -1077,10 +1079,40 @@ describe('clientMessageHandler: standalone terminal control plane', () => {
     dispatch({ type: 'removeDirectory', path: target }, ctx({ ptyManager: manager }));
 
     expect(readConfig().directories).toEqual([]);
-    expect(broadcasts).toHaveLength(1);
+    expect(broadcasts).toHaveLength(2);
     expect(broadcasts[0].directories).not.toContainEqual(
       expect.objectContaining({ path: target }) as unknown,
     );
+    expect(broadcasts[1]).toEqual({ type: 'projectsLoaded', paths: [], current: undefined });
+  });
+
+  it('setCurrentProject opens a project in every office, and refuses anything else', () => {
+    const { manager } = workingPtyManager();
+    const project = path.join(tempHome, 'BRIDGE');
+    const hub = path.join(tempHome, 'superagent');
+    fs.mkdirSync(project);
+    fs.mkdirSync(hub);
+    dispatch(
+      { type: 'saveDirectory', name: 'BRIDGE', path: project },
+      ctx({ ptyManager: manager }),
+    );
+    dispatch(
+      { type: 'saveDirectory', name: 'superagent', path: hub },
+      ctx({ ptyManager: manager }),
+    );
+    broadcasts = [];
+    sent = [];
+
+    dispatch({ type: 'setCurrentProject', path: project }, ctx({ ptyManager: manager }));
+    expect(broadcasts).toEqual([{ type: 'projectsLoaded', paths: [project], current: project }]);
+    expect(readConfig().currentProject).toBe(project);
+
+    // The superagent is no project: the asker is put back on the open one.
+    broadcasts = [];
+    dispatch({ type: 'setCurrentProject', path: hub }, ctx({ ptyManager: manager }));
+    expect(broadcasts).toEqual([]);
+    expect(sent).toEqual([{ type: 'projectsLoaded', paths: [project], current: project }]);
+    expect(readConfig().currentProject).toBe(project);
   });
 
   it('launchAgent with a directoryPath labels the agent with its Directory name', () => {

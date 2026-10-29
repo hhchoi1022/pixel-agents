@@ -1,0 +1,122 @@
+{
+  "directories": [
+    {
+      "name": "pixelagents",
+      "path": "/home/hhchoi1022/code/pixel-agents-src"
+    },
+    {
+      "name": "ezphot",
+      "path": "/lyman/data1/factory_hhchoi/code/ezphot"
+    },
+    {
+      "name": "NGSF-7DT",
+      "path": "/home/hhchoi1022/code/NGSF-7DT"
+    },
+    {
+      "name": "BRIDGE",
+      "path": "/home/hhchoi1022/code/BRIDGE"
+    },
+    {
+      "name": "superagent",
+      "path": "/home/hhchoi1022/code/superagent"
+    },
+    {
+      "name": "tcspy",
+      "path": "/lyman/data1/factory_hhchoi/code/tcspy"
+    }
+  ],
+  "currentProject": "/lyman/data1/factory_hhchoi/code/tcspy",
+  "areaMappings": {
+    "vscode": {
+      "ezphot": [
+        "ezphot"
+      ],
+      "bridge": [
+        "bridge"
+      ],
+      "ngsf-7dt": [
+        "ngsf-7dt"
+      ],
+      "superagent": [
+        "superagent"
+      ],
+      "pixelagents": [
+        "superagent"
+      ]
+    },
+    "standalone": {
+      "BRIDGE": [
+        "ezphot"
+      ],
+      "ezphot": [
+        "ezphot"
+      ],
+      "NGSF-7DT": [
+        "ezphot"
+      ],
+      "superagent": [
+        "superagent"
+      ],
+      "pixelagents": [
+        "superagent"
+      ]
+    }
+  },
+  "externalAssetDirectories": [],
+  "serverRoom": {
+    "mounts": [
+      "/wfm/data1",
+      "/wfm/data2"
+    ],
+    "name": "WFM",
+    "remotes": [
+      {
+        "name": "LYMAN",
+        "statsFile": "/lyman/data1/factory_hhchoi/.pixel-agents/lyman-stats.json"
+      }
+    ]
+  },
+  "projectDisplays": {
+    "projects": {
+      "BRIDGE": {
+        "alerts": {
+          "statusFile": "/home/hhchoi1022/result/bridge/ops/status.json",
+          "eventsFile": "/home/hhchoi1022/result/bridge/ops/events.jsonl",
+          "dashboardUrl": "http://127.0.0.1:8767/"
+        }
+      }
+    }
+  },
+  "pipelineSources": {
+    "ezphotLogRoot": "/home/hhchoi1022/ezphot/log/recipes",
+    "ezphotVizRoot": "/home/hhchoi1022/viz",
+    "ngsfRunsRoot": "/home/hhchoi1022/ngsf_7dt/runs",
+    "bridgeResultsRoot": "/home/hhchoi1022/result/bridge/results"
+  },
+  "ports": [
+    {
+      "port": 8765,
+      "owner": "ezphot",
+      "purpose": "처리 현황 목록 + 단계별 그림 갤러리",
+      "url": "http://127.0.0.1:8765/ezphot/",
+      "servingDir": "/home/hhchoi1022/viz",
+      "status": "상시"
+    },
+    {
+      "port": 8766,
+      "owner": "NGSF-7DT",
+      "purpose": "분류 현황 목록 + 대상별 fit·QA 리포트",
+      "url": "http://127.0.0.1:8766/ngsf-7dt/",
+      "servingDir": "/home/hhchoi1022/ngsf_7dt/web",
+      "status": "상시"
+    },
+    {
+      "port": 8767,
+      "owner": "BRIDGE",
+      "purpose": "alert feed 운영 대시보드 (opsmonitor)",
+      "url": "http://127.0.0.1:8767/",
+      "servingDir": "/home/hhchoi1022/result/bridge/ops",
+      "status": "상시"
+    }
+  ]
+}

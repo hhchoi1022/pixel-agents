@@ -759,6 +759,7 @@ export class HookEventHandler {
           toolName: agent.activeToolNames.get(toolId),
           runInBackground: true,
           isTeammateSpawn: agent.teammateSpawnToolIds?.has(toolId) || undefined,
+          subagentType: agent.subagentTypes?.get(toolId),
         });
       }
     }

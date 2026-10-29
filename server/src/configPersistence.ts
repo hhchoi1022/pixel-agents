@@ -71,6 +71,9 @@ export interface PixelAgentsConfig {
   /** User-defined Directories. Machine-wide by decision: a Directory defined
    *  from the phone shows up in VS Code and vice versa. */
   directories: UserDirectory[];
+  /** Path of the project Directory the office has open (directories.ts
+   *  listProjects), as stored there. Absent = none picked, every agent shows. */
+  currentProject?: string;
 }
 
 const DEFAULT_ADAPTER_SETTINGS: AdapterSettings = {
@@ -228,6 +231,7 @@ export function readConfig(): PixelAgentsConfig {
       hooksConsent: parseHooksConsent(parsed.hooksConsent),
       hooksEnabled: parseHooksEnabled(parsed.hooksEnabled),
       directories: parseUserDirectories(parsed.directories),
+      currentProject: typeof parsed.currentProject === 'string' ? parsed.currentProject : undefined,
     };
   } catch (err) {
     console.error('[Pixel Agents] Failed to read config file:', err);

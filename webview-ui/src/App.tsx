@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
+import {
+  PROJECT_ALERTS_ENABLED,
+  PROJECT_WEB_PAGES_ENABLED,
+  SERVER_RACKS_ENABLED,
+  STATUS_BOARD_ENABLED,
+} from '../../core/src/constants.js';
 import { toMajorMinor } from './changelogData.js';
 import { AgentCardBar } from './components/AgentCardBar.js';
 import { BottomToolbar } from './components/BottomToolbar.js';
+import { BridgeFeedOverlay } from './components/BridgeFeedOverlay.js';
 import { ChangelogModal } from './components/ChangelogModal.js';
 import { ConnectionIndicator } from './components/ConnectionIndicator.js';
 import { DebugView } from './components/DebugView.js';
@@ -10,14 +17,20 @@ import { DirectoryModal } from './components/DirectoryModal.js';
 import { EditActionBar } from './components/EditActionBar.js';
 import { IntroBubble } from './components/IntroBubble.js';
 import { MigrationNotice } from './components/MigrationNotice.js';
+import { ProjectBadge } from './components/ProjectBadge.js';
+import { folderName } from './components/projectFolder.js';
+import { ProjectWebKioskOverlay } from './components/ProjectWebKioskOverlay.js';
+import { ServerRackOverlay } from './components/ServerRackOverlay.js';
 import { SettingsModal } from './components/SettingsModal.js';
+import { StatusBoardOverlay } from './components/StatusBoardOverlay.js';
 import { TerminalDrawer } from './components/TerminalDrawer.js';
 import { Tooltip } from './components/Tooltip.js';
 import { Button } from './components/ui/Button.js';
 import { Modal } from './components/ui/Modal.js';
 import { VersionIndicator } from './components/VersionIndicator.js';
+import { WebPagesOverlay } from './components/WebPagesOverlay.js';
 import { ZoomControls } from './components/ZoomControls.js';
-import { OFFICE_CANVAS_TEST_ID } from './constants.js';
+import { DEFAULT_DOCUMENT_TITLE, OFFICE_CANVAS_TEST_ID } from './constants.js';
 import { useDirectoryEditor } from './hooks/useDirectoryEditor.js';
 import { useEditorActions } from './hooks/useEditorActions.js';
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js';
@@ -33,9 +46,10 @@ import { OfficeCanvas } from './office/components/OfficeCanvas.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
 import { EditorState } from './office/editor/editorState.js';
 import { EditorToolbar } from './office/editor/EditorToolbar.js';
+import { setAlertsProject } from './office/engine/bridgeFeeds.js';
 import { OfficeState } from './office/engine/officeState.js';
 import { exportLayoutToFile } from './office/layout/exportLayout.js';
-import { isRotatable } from './office/layout/furnitureCatalog.js';
+import { getCatalogEntry, isRotatable } from './office/layout/furnitureCatalog.js';
 import { migrateLayoutColors } from './office/layout/layoutSerializer.js';
 import { overlayProjection } from './office/projection.js';
 import { getPetCount } from './office/sprites/petSpriteData.js';
@@ -95,6 +109,9 @@ function App() {
     directoryRejection,
     directorySaved,
     directorySuggestions,
+    projectPaths,
+    currentProject,
+    agentProjects,
     agentDirectoryNames,
     externalAssetDirectories,
     lastSeenVersion,
@@ -151,11 +168,47 @@ function App() {
     () => getOfficeState().selectedAgentId,
   );
 
+  // Agents of another project sit this one out: no character, card or tab
+  // until the badge switches back. Their processes and terminals run on
+  // untouched. Agents outside every project (the superagent) always show, and
+  // with no project picked everyone does.
+  const hiddenAgentIds = useMemo(() => {
+    const ids = new Set<number>();
+    if (currentProject === null) return ids;
+    for (const [id, project] of Object.entries(agentProjects)) {
+      if (project !== currentProject) ids.add(Number(id));
+    }
+    return ids;
+  }, [agentProjects, currentProject]);
+  useEffect(() => getOfficeState().setHiddenAgents(hiddenAgentIds), [hiddenAgentIds]);
+  const visibleAgents = useMemo(
+    () => agents.filter((id) => !hiddenAgentIds.has(id)),
+    [agents, hiddenAgentIds],
+  );
+  const visibleTerminalAgentIds = useMemo(
+    () => terminalAgentIds.filter((id) => !hiddenAgentIds.has(id)),
+    [terminalAgentIds, hiddenAgentIds],
+  );
+  const visibleSubagentCharacters = useMemo(
+    () => subagentCharacters.filter((s) => !hiddenAgentIds.has(s.parentAgentId)),
+    [subagentCharacters, hiddenAgentIds],
+  );
+  // Running agents per project folder, for the badge menu.
+  const projectAgentCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const id of agents) {
+      const project = agentProjects[id];
+      if (project) counts[project] = (counts[project] ?? 0) + 1;
+    }
+    return counts;
+  }, [agents, agentProjects]);
+
   // Standalone only: every input here stays false/empty under VS Code. Owns the
   // active tab on both shells; the desktop-only bits (isOpen, width, resize)
   // are simply unread on mobile, where the sliding track plays the drawer.
   const terminalDrawer = useTerminalDrawer({
     terminalAgentIds,
+    visibleTerminalAgentIds,
     getOfficeState,
     agentTools,
     agentStatuses,
@@ -163,8 +216,8 @@ function App() {
     agentSeenActivity,
   });
 
-  const launchIntoDirectory = useCallback((directory: Directory) => {
-    transport.send({ type: 'launchAgent', directoryPath: directory.path });
+  const launchIntoDirectory = useCallback((directory: Directory, resumeSessionId?: string) => {
+    transport.send({ type: 'launchAgent', directoryPath: directory.path, resumeSessionId });
   }, []);
   const mobileShell = useMobileShell({
     getOfficeState,
@@ -339,6 +392,8 @@ function App() {
       // If clicked agent is a sub-agent, focus the parent's terminal instead
       const os = getOfficeState();
       const focusId = os.terminalOwnerOf(agentId);
+      // A resident between spawns has no terminal behind it: selecting it is all.
+      if (focusId === agentId && os.isResident(agentId)) return;
       transport.send({ type: 'focusAgent', id: focusId });
       // Standalone: focusAgent is a no-op server-side (there's no editor to
       // raise a panel in), so focus is resolved here — reveal the agent's tab
@@ -366,6 +421,43 @@ function App() {
   }, []);
 
   const officeState = getOfficeState();
+
+  // A project is shown by its Directory's name (the prefix of its leads'
+  // session names), falling back to the folder name.
+  const projectLabel = useCallback(
+    (path: string) => directories.find((d) => d.path === path)?.name ?? folderName(path),
+    [directories],
+  );
+  // The canvas shows the open project's own displays (its alert yard).
+  useEffect(
+    () => setAlertsProject(currentProject !== null ? projectLabel(currentProject) : null),
+    [currentProject, projectLabel],
+  );
+  // The badge: the open project, or the plain title while none is picked (as
+  // long as there is something to pick). A read-only office gets the label.
+  const projectName =
+    currentProject !== null
+      ? projectLabel(currentProject)
+      : projectPaths?.length
+        ? DEFAULT_DOCUMENT_TITLE
+        : null;
+  const projectBadgeMenu = !officeReadOnly
+    ? {
+        currentPath: currentProject ?? undefined,
+        projects: projectPaths?.map((path) => ({ path, name: projectLabel(path) })) ?? null,
+        agentCounts: projectAgentCounts,
+        onOpenMenu: () => transport.send({ type: 'requestProjects' }),
+        onSwitch: (path: string) => transport.send({ type: 'setCurrentProject', path }),
+      }
+    : {};
+  useEffect(() => {
+    const title = projectName ?? DEFAULT_DOCUMENT_TITLE;
+    document.title = title;
+    // Safari's "Add to Home Screen" names the icon from this meta.
+    document
+      .querySelector('meta[name="apple-mobile-web-app-title"]')
+      ?.setAttribute('content', title);
+  }, [projectName]);
 
   // Merged set of Directories the Areas dropdown can map: host-contributed ones plus
   // every distinct Directory an agent has run in this session (deduped by name; name
@@ -497,6 +589,14 @@ function App() {
           {/* Mobile: pinch replaces the zoom buttons, and the toolbar's
                 jobs move to the card bar (+) and the floating Settings button. */}
           {!isMobile && <ZoomControls zoom={editor.zoom} onZoomChange={editor.handleZoomChange} />}
+          {/* Right of the zoom buttons (left-8 + 40px wide + 8px air). */}
+          {!isMobile && projectName && (
+            <ProjectBadge
+              name={projectName}
+              className="absolute top-8 left-56 z-10"
+              {...projectBadgeMenu}
+            />
+          )}
 
           {/* Vignette overlay */}
           <div
@@ -520,9 +620,14 @@ function App() {
           {editor.isEditMode &&
             (() => {
               const selUid = editorState.selectedFurnitureUid;
-              const selColor = selUid
-                ? (officeState.getLayout().furniture.find((f) => f.uid === selUid)?.color ?? null)
-                : null;
+              const selItem = selUid
+                ? officeState.getLayout().furniture.find((f) => f.uid === selUid)
+                : undefined;
+              const selColor = selItem?.color ?? null;
+              const selPinned =
+                selItem && getCatalogEntry(selItem.type)?.category === 'chairs'
+                  ? selItem.pinned === true
+                  : null;
               return (
                 <EditorToolbar
                   activeTool={editorState.activeTool}
@@ -530,6 +635,8 @@ function App() {
                   selectedFurnitureType={editorState.placingType}
                   selectedFurnitureUid={selUid}
                   selectedFurnitureColor={selColor}
+                  selectedFurniturePinned={selPinned}
+                  onSelectedFurniturePinnedChange={editor.handleSelectedFurniturePinnedChange}
                   floorColor={editorState.floorColor}
                   wallColor={editorState.wallColor}
                   selectedWallSet={editorState.selectedWallSet}
@@ -570,16 +677,63 @@ function App() {
 
           <ToolOverlay
             officeState={officeState}
-            agents={agents}
+            agents={visibleAgents}
             agentTools={agentTools}
             subagentTools={subagentTools}
-            subagentCharacters={subagentCharacters}
+            subagentCharacters={visibleSubagentCharacters}
             containerRef={containerRef}
             zoom={editor.zoom}
             panRef={editor.panRef}
             onCloseAgent={handleCloseAgent}
             alwaysShowOverlay={alwaysShowOverlay}
           />
+
+          {SERVER_RACKS_ENABLED && (
+            <ServerRackOverlay
+              officeState={officeState}
+              containerRef={containerRef}
+              zoom={editor.zoom}
+              panRef={editor.panRef}
+            />
+          )}
+
+          {PROJECT_ALERTS_ENABLED && (
+            <BridgeFeedOverlay
+              officeState={officeState}
+              containerRef={containerRef}
+              zoom={editor.zoom}
+              panRef={editor.panRef}
+            />
+          )}
+
+          {PROJECT_WEB_PAGES_ENABLED && (
+            <ProjectWebKioskOverlay
+              officeState={officeState}
+              containerRef={containerRef}
+              zoom={editor.zoom}
+              panRef={editor.panRef}
+            />
+          )}
+
+          {/* Status board and web chips: parked until they're placed back on
+                the map. */}
+          {STATUS_BOARD_ENABLED && (
+            <>
+              <StatusBoardOverlay
+                officeState={officeState}
+                containerRef={containerRef}
+                zoom={editor.zoom}
+                panRef={editor.panRef}
+              />
+
+              <WebPagesOverlay
+                officeState={officeState}
+                containerRef={containerRef}
+                zoom={editor.zoom}
+                panRef={editor.panRef}
+              />
+            </>
+          )}
         </>
       ) : (
         <DebugView
@@ -645,17 +799,22 @@ function App() {
       )}
 
       {/* Mobile: Settings floats top-left (the layout editor stays desktop-
-            only — its tools are drag/hover-driven). */}
-      {isMobile && !isDebugMode && !officeReadOnly && (
-        <div className="absolute mobile-safe-top left-8 z-20">
-          <Button
-            size="sm"
-            variant={isSettingsOpen ? 'active' : 'default'}
-            className="border-border! shadow-pixel"
-            onClick={() => setIsSettingsOpen((v) => !v)}
-          >
-            Settings
-          </Button>
+            only — its tools are drag/hover-driven), the project badge beside it. */}
+      {isMobile && !isDebugMode && (!officeReadOnly || projectName) && (
+        <div className="absolute mobile-safe-top left-8 z-20 flex items-center gap-8">
+          {!officeReadOnly && (
+            <Button
+              size="sm"
+              variant={isSettingsOpen ? 'active' : 'default'}
+              className="border-border! shadow-pixel"
+              onClick={() => setIsSettingsOpen((v) => !v)}
+            >
+              Settings
+            </Button>
+          )}
+          {projectName && (
+            <ProjectBadge name={projectName} className="relative" {...projectBadgeMenu} />
+          )}
         </div>
       )}
 
@@ -708,7 +867,7 @@ function App() {
           office={officeRegion}
           shell={mobileShell}
           drawer={terminalDrawer}
-          agentIds={agents}
+          agentIds={visibleAgents}
           terminalAgentIds={terminalAgentIds}
           focusedAgentId={focusedAgentId}
           terminalAvailable={terminalAvailable}
@@ -735,6 +894,7 @@ function App() {
           {terminalAvailable ? (
             <TerminalDrawer
               agentIds={terminalAgentIds}
+              cardAgentIds={visibleTerminalAgentIds}
               shownAgentId={terminalDrawer.shownAgentId}
               onSelectAgent={terminalDrawer.select}
               onCloseAgent={handleCloseAgent}
@@ -749,7 +909,7 @@ function App() {
           ) : (
             !isDebugMode && (
               <AgentCardBar
-                agentIds={agents}
+                agentIds={visibleAgents}
                 focusedAgentId={focusedAgentId}
                 getAppearance={terminalDrawer.getAppearance}
                 statusFor={terminalDrawer.statusFor}

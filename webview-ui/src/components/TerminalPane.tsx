@@ -91,6 +91,10 @@ export function TerminalPane({
       theme: { ...TERMINAL_THEME },
       scrollback: TERMINAL_SCROLLBACK_LINES,
       cursorBlink: true,
+      // TUIs like Claude Code turn on mouse tracking, which swallows drags.
+      // Shift+drag forces a selection everywhere except macOS, where xterm only
+      // honours Option+drag — and only with this flag (off by default).
+      macOptionClickForcesSelection: true,
       // OSC 8 hyperlinks. Without this xterm's built-in activator opens any
       // scheme behind a confirm(); see terminalLinkOpener.
       linkHandler: { activate: openLink },
@@ -127,6 +131,7 @@ export function TerminalPane({
     // Keyboard copy (verbatim; Alt+C = copy as text) and paste, OSC 52 writes.
     const detachClipboard = attachClipboardInput(term, {
       isActive: () => isActiveRef.current,
+      host,
     });
     registerInputRef.current?.(agentId, {
       send: (data) => connection.write(data),

@@ -15,15 +15,29 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
-import type { HookProvider } from '../../../core/src/provider.js';
+import type { HookProvider, LaunchPeers } from '../../../core/src/provider.js';
 import type { AgentRuntime } from '../agentRuntime.js';
 import { createAgentState } from '../agentState.js';
 import type { AgentStateStore } from '../agentStateStore.js';
-import { JSONL_POLL_INTERVAL_MS } from '../constants.js';
-import { directoryNameForLaunch } from '../directories.js';
+import {
+  JSONL_POLL_INTERVAL_MS,
+  LAUNCH_LEAD_ROLE,
+  LAUNCH_SESSION_NAME_ID_LENGTH,
+  SUPERAGENT_DIRECTORY_NAME,
+} from '../constants.js';
+import {
+  currentProjectFolder,
+  directoryNameForLaunch,
+  isSuperagentDirectory,
+  listProjects,
+  projectAt,
+  projectsMessage,
+  setCurrentProject,
+} from '../directories.js';
 import { startFileWatching } from '../fileWatcher.js';
 import { directoryNameFor, hostDirectory } from '../hostDirectory.js';
 import { assignPaletteIfNeeded } from '../paletteAssigner.js';
+import { isSessionId } from '../resumableSessions.js';
 import type { AgentState } from '../types.js';
 import type { PtySessionManager } from './ptySessionManager.js';
 
@@ -41,6 +55,10 @@ export interface LaunchStandaloneAgentOptions {
   /** Read from the host's persisted permission posture by the caller; never a
    *  per-launch choice made in the office. */
   bypassPermissions?: boolean;
+  /** Continue this session (`--resume`) instead of starting a new one. Refused
+   *  unless its transcript is in the Directory's session dir and no process --
+   *  in the office or anywhere else -- holds it. */
+  resumeSessionId?: string;
   cols?: number;
   rows?: number;
 }
@@ -61,10 +79,31 @@ export function launchStandaloneAgent(
   }
 
   const cwd = options.directoryPath ?? process.cwd();
-  const sessionId = crypto.randomUUID();
+  const resume = options.resumeSessionId;
+  if (resume !== undefined) {
+    const refusal = resumeRefusal(deps, cwd, resume);
+    if (refusal !== undefined) {
+      console.error(`[Pixel Agents] Terminal: cannot resume ${resume} -- ${refusal}`);
+      return null;
+    }
+  }
+  // A resumed session keeps its id, so its name (`launchPeers` takes the id's
+  // head) is the one the superagent already knows it by.
+  const sessionId = resume ?? crypto.randomUUID();
+  // The character's origin label (and its Area-mapping key): the name of the
+  // Directory it was launched into, as the user named it — so an entry called
+  // "Side Project" labels its agents that, not "side-project", and the Areas
+  // it was assigned in the modal actually match. Falls back to the basename
+  // for a cwd that is no Directory at all.
+  const directoryName = directoryNameForLaunch(cwd, [hostDirectory()]) ?? directoryNameFor(cwd);
+  // A project Directory is the project the agent belongs to; the superagent's
+  // (and any other) Directory belongs to none, so it shows in every project.
+  const projectPath = projectAt(cwd)?.path;
 
   const launch = provider.buildLaunchCommand?.(sessionId, cwd, {
     bypassPermissions: options.bypassPermissions,
+    peers: launchPeers(cwd, sessionId),
+    resume: resume !== undefined,
   });
   if (!launch) {
     console.error('[Pixel Agents] Terminal: provider.buildLaunchCommand is not implemented');
@@ -102,6 +141,12 @@ export function launchStandaloneAgent(
   // for a /clear file, exactly as the VS Code path does.
   const expectedFile = path.join(projectDir, `${sessionId}.jsonl`);
   runtime.knownJsonlFiles.add(expectedFile);
+  if (resume !== undefined) {
+    // Closing the session's previous agent dismissed its transcript; this
+    // agent is the one that owns it now.
+    runtime.dismissalTracker.clearDismissal(expectedFile);
+    runtime.dismissalTracker.clearSeededMtime(expectedFile);
+  }
 
   const agent = createAgentState({
     id,
@@ -112,14 +157,15 @@ export function launchStandaloneAgent(
     isExternal: false,
     projectDir,
     jsonlFile: expectedFile,
-    // The character's origin label (and its Area-mapping key): the name of the
-    // Directory it was launched into, as the user named it — so an entry called
-    // "Side Project" labels its agents that, not "side-project", and the Areas
-    // it was assigned in the modal actually match. Falls back to the basename
-    // for a cwd that is no Directory at all.
-    directoryName: directoryNameForLaunch(cwd, [hostDirectory()]) ?? directoryNameFor(cwd),
+    directoryName,
+    projectPath,
     providerId: provider.id,
   });
+  if (resume !== undefined) {
+    // Watch from the end: the turns already on disk are history, not activity.
+    // The context gauge still comes from the tail (seedContextUsage).
+    agent.fileOffset = fileSize(expectedFile);
+  }
 
   // Server-side, like every other creation path: the palette rides the
   // agentCreated broadcast and is persisted with the agent, so a reload
@@ -153,16 +199,69 @@ export function launchStandaloneAgent(
 
   startJsonlPoll(deps, id, agent);
 
+  // Launching into another project opens it, so the new agent isn't born hidden.
+  if (projectPath && projectPath !== currentProjectFolder() && setCurrentProject(projectPath)) {
+    store.broadcast(projectsMessage());
+  }
+
   return id;
+}
+
+/** Why `sessionId` can't be resumed in `cwd`, or undefined when it can. */
+function resumeRefusal(
+  deps: LaunchStandaloneAgentDeps,
+  cwd: string,
+  sessionId: string,
+): string | undefined {
+  if (!isSessionId(sessionId)) return 'not a session id';
+  for (const agent of deps.store.values()) {
+    if (agent.sessionId === sessionId) return 'already in the office';
+  }
+  if (deps.provider.getLiveSessionIds?.().has(sessionId)) return 'running in another terminal';
+  const projectDir = deps.provider.getSessionDirs?.(cwd)[0];
+  if (projectDir === undefined || !fs.existsSync(path.join(projectDir, `${sessionId}.jsonl`))) {
+    return `no transcript for it under ${cwd}`;
+  }
+  return undefined;
+}
+
+function fileSize(file: string): number {
+  try {
+    return fs.statSync(file).size;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * How a launch into `cwd` is named: a project's lead is `<project>/lead-<id>`
+ * (the project's Directory name as the prefix the superagent finds it by), the
+ * superagent is `superagent-<id>` and told those projects, and a launch into
+ * any other Directory goes unnamed. The session id's head ends each name
+ * because Claude doesn't de-duplicate names.
+ */
+export function launchPeers(cwd: string, sessionId: string): LaunchPeers | undefined {
+  const id = sessionId.slice(0, LAUNCH_SESSION_NAME_ID_LENGTH);
+  const project = projectAt(cwd);
+  if (project) {
+    const projectName = project.name.trim().replace(/[\s/]+/g, '-') || 'project';
+    return { sessionName: `${projectName}/${LAUNCH_LEAD_ROLE}-${id}` };
+  }
+  if (isSuperagentDirectory(cwd)) {
+    return {
+      sessionName: `${SUPERAGENT_DIRECTORY_NAME}-${id}`,
+      leadProjects: listProjects().map((p) => p.name),
+    };
+  }
+  return undefined;
 }
 
 /**
  * Wait for the session's JSONL to appear, then start watching it.
  *
  * Hooks (the default) already route by sessionId, so this is what backfills tool
- * content and keeps hooks-off standalone working at all. Unlike the VS Code
- * path this does NOT implement /resume reassignment -- standalone always spawns
- * a fresh --session-id, so there's no resume case to detect here.
+ * content and keeps hooks-off standalone working at all. A resumed launch keeps
+ * its session's id, so its transcript is already here and the first poll finds it.
  */
 function startJsonlPoll(deps: LaunchStandaloneAgentDeps, id: number, agent: AgentState): void {
   const { store, runtime } = deps;

@@ -22,6 +22,9 @@ export interface AgentState {
   hadToolsInTurn: boolean;
   /** Directory name — the agent's origin label (only set for multi-root workspaces) */
   directoryName?: string;
+  /** The project open in the office when this agent was launched from it
+   *  (directories.agentProjectFolder). Unset for adopted sessions. */
+  projectPath?: string;
   /** Timestamp of last JSONL data received (ms since epoch) */
   lastDataAt: number;
   /** Total JSONL lines processed for this agent */
@@ -79,6 +82,10 @@ export interface AgentState {
    *  the webview never creates a Subtask ghost for them. Transient, lazily
    *  created, never persisted. */
   teammateSpawnToolIds?: Set<string>;
+  /** Spawn tool id → the call's `subagent_type`. Every agentToolStart
+   *  (re-)broadcast for the spawn carries it so the webview can name the
+   *  Sub-agent. Transient, lazily created, never persisted. */
+  subagentTypes?: Map<string, string>;
 
   // -- Avatar customization --
   /** Preferred character palette (0-5). If undefined, auto-assigned for diversity. */

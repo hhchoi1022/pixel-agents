@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { cardVariant, mergeOrder, reorderByPointer } from '../src/components/cardBar.js';
+import {
+  cardVariant,
+  mergeOrder,
+  reorderByPointer,
+  resolveShownAgent,
+} from '../src/components/cardBar.js';
 
 describe('cardVariant', () => {
   it('the showing pane wins over the selected character', () => {
@@ -39,5 +44,21 @@ describe('reorderByPointer', () => {
   it('skips cards that are not laid out', () => {
     const partial = (id: number) => (id === 2 ? null : mid(id));
     expect(reorderByPointer([1, 2, 3], 1, partial, 200)).toEqual([2, 1, 3]);
+  });
+});
+
+describe('resolveShownAgent', () => {
+  it('shows the active agent while it is in view', () => {
+    expect(resolveShownAgent(2, [3, 2], [1, 2, 3])).toBe(2);
+  });
+
+  it('returns to the agent last shown in the project switched to', () => {
+    // Active agent 5 belongs to the project just left; 3 was last shown here.
+    expect(resolveShownAgent(5, [5, 3, 1], [1, 2, 3])).toBe(3);
+  });
+
+  it('falls back to the first agent in view when none was shown before', () => {
+    expect(resolveShownAgent(5, [5, 6], [1, 2])).toBe(1);
+    expect(resolveShownAgent(null, [], [])).toBeNull();
   });
 });

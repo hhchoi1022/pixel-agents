@@ -16,7 +16,7 @@ export interface MobileShellController {
   selectCard: (agentId: number) => void;
   /** A Directory picked from the + card's drawer: launch into it, then
    *  slide over once the new terminal appears. */
-  launch: (directory: Directory) => void;
+  launch: (directory: Directory, resumeSessionId?: string) => void;
 }
 
 interface MobileShellInputs {
@@ -24,7 +24,7 @@ interface MobileShellInputs {
   terminalAgentIds: number[];
   drawer: TerminalDrawerController;
   focusedAgentId: number | null;
-  launchAgent: (directory: Directory) => void;
+  launchAgent: (directory: Directory, resumeSessionId?: string) => void;
 }
 
 /**
@@ -54,9 +54,9 @@ export function useMobileShell({
   }, [lastOpened]);
 
   const launch = useCallback(
-    (directory: Directory) => {
+    (directory: Directory, resumeSessionId?: string) => {
       pendingLaunchRef.current = true;
-      launchAgent(directory);
+      launchAgent(directory, resumeSessionId);
     },
     [launchAgent],
   );

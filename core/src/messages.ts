@@ -43,6 +43,8 @@ export type ServerMessage =
   | DirectorySaved
   | DirectoryRejected
   | DirectorySuggestions
+  | ProjectsLoaded
+  | ResumableSessions
   | TerminalAvailability
   | TerminalSessionOpened
   | TerminalSessionClosed
@@ -75,6 +77,9 @@ export type ClientMessage =
   | SaveDirectory
   | RemoveDirectory
   | RequestDirectorySuggestions
+  | RequestProjects
+  | SetCurrentProject
+  | RequestResumableSessions
   | RequestDiagnostics;
 
 export interface ProviderCapabilities {
@@ -87,6 +92,7 @@ export interface AgentCreated {
   type: 'agentCreated';
   id: number;
   directoryName?: string;
+  projectPath?: string;
   isExternal?: boolean;
   palette?: number;
   hueShift?: number;
@@ -107,6 +113,7 @@ export interface ExistingAgents {
   agents: number[];
   agentMeta: Record<string, AgentSeatMeta>;
   directoryNames: Record<string, string>;
+  projectPaths?: Record<string, string>;
   externalAgents: Record<string, boolean>;
 }
 
@@ -134,6 +141,7 @@ export interface AgentToolStart {
   permissionActive?: boolean;
   runInBackground?: boolean;
   isTeammateSpawn?: boolean;
+  subagentType?: string;
 }
 
 export interface AgentToolDone {
@@ -354,6 +362,27 @@ export interface DirectorySuggestions {
   paths: string[];
 }
 
+export interface ProjectsLoaded {
+  type: 'projectsLoaded';
+  paths: string[];
+  current?: string;
+  subagents?: string[];
+}
+
+export interface ResumableSessions {
+  type: 'resumableSessions';
+  sessions: ResumableSession[];
+}
+
+export interface ResumableSession {
+  sessionId: string;
+  directoryPath: string;
+  directoryName: string;
+  title?: string;
+  lastPrompt?: string;
+  lastActiveMs: number;
+}
+
 export interface TerminalAvailability {
   type: 'terminalAvailability';
   available: boolean;
@@ -383,6 +412,7 @@ export interface WebviewReady {
 export interface LaunchAgent {
   type: 'launchAgent';
   directoryPath?: string;
+  resumeSessionId?: string;
 }
 
 export interface FocusAgent {
@@ -510,6 +540,19 @@ export interface RemoveDirectory {
 
 export interface RequestDirectorySuggestions {
   type: 'requestDirectorySuggestions';
+}
+
+export interface RequestProjects {
+  type: 'requestProjects';
+}
+
+export interface SetCurrentProject {
+  type: 'setCurrentProject';
+  path: string;
+}
+
+export interface RequestResumableSessions {
+  type: 'requestResumableSessions';
 }
 
 export interface RequestDiagnostics {

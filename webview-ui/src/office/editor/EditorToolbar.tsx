@@ -44,6 +44,9 @@ interface EditorToolbarProps {
   selectedFurnitureType: string;
   selectedFurnitureUid: string | null;
   selectedFurnitureColor: ColorValue | null;
+  /** Pin state of the selected item when it's a chair; null for anything else. */
+  selectedFurniturePinned: boolean | null;
+  onSelectedFurniturePinnedChange: (pinned: boolean) => void;
   floorColor: ColorValue;
   wallColor: ColorValue;
   selectedWallSet: number;
@@ -95,6 +98,8 @@ export function EditorToolbar({
   selectedFurnitureType,
   selectedFurnitureUid,
   selectedFurnitureColor,
+  selectedFurniturePinned,
+  onSelectedFurniturePinnedChange,
   floorColor,
   wallColor,
   selectedWallSet,
@@ -653,6 +658,18 @@ export function EditorToolbar({
           sliders open straight away rather than behind a Color toggle, and
           restoring the original sprite is the picker's own Reset (same control
           the new-furniture picker offers). */}
+      {selectedFurnitureUid && selectedFurniturePinned !== null && (
+        <div className="flex gap-4">
+          <Button
+            variant={selectedFurniturePinned ? 'active' : 'default'}
+            size="md"
+            onClick={() => onSelectedFurniturePinnedChange(!selectedFurniturePinned)}
+            title="Agents seated in a pinned chair stay put when idle instead of wandering"
+          >
+            {selectedFurniturePinned ? 'Seat pinned' : 'Pin seat'}
+          </Button>
+        </div>
+      )}
       {selectedFurnitureUid && (
         <ColorPicker
           value={effectiveColor}

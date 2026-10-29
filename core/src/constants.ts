@@ -18,6 +18,23 @@ export const HOOK_SCRIPTS_DIR = '.pixel-agents/hooks';
 export const BASH_COMMAND_DISPLAY_MAX_LENGTH = 30;
 export const TASK_DESCRIPTION_DISPLAY_MAX_LENGTH = 40;
 
+// ── Office displays ──────────────────────────────────────────
+
+// Off = the server skips the display's pollers and the webview neither draws
+// it nor mounts its click overlay; the code stays in place.
+
+/** Server racks (systemStats) on the FLOOR_1 zone. */
+export const SERVER_RACKS_ENABLED = true;
+/** The open project's alert-feed antenna yard (bridgeOps; BRIDGE today),
+ *  placed by ~/.pixel-agents/project-displays.json. */
+export const PROJECT_ALERTS_ENABLED = true;
+/** The open project's web page kiosk (webPages: its permanent row in
+ *  ~/.pixel-agents/ports.md + the port scan), in the same band. */
+export const PROJECT_WEB_PAGES_ENABLED = true;
+/** Status board (pipelineStatus) and the web-page chips (webPages) on the
+ *  FLOOR_2 zone. */
+export const STATUS_BOARD_ENABLED = false;
+
 // ── Terminal (standalone embedded terminal) ──────────────────
 // The raw PTY byte stream deliberately lives OUTSIDE the AsyncAPI contract --
 // it is a data plane (unstructured, high-frequency), not a control plane.

@@ -304,6 +304,21 @@ export function setFurnitureColor(
   };
 }
 
+/** Pin (or unpin) a placed chair. Returns new layout (immutable). */
+export function setFurniturePinned(
+  layout: OfficeLayout,
+  uid: string,
+  pinned: boolean,
+): OfficeLayout {
+  if (!layout.furniture.some((f) => f.uid === uid)) return layout;
+  return {
+    ...layout,
+    furniture: layout.furniture.map((f) =>
+      f.uid === uid ? { ...f, pinned: pinned || undefined } : f,
+    ),
+  };
+}
+
 /**
  * Place a new catalog item under the cursor at (col, row) — wall items hang so
  * their bottom row sits on the hovered tile — with a fresh uid and, if given,

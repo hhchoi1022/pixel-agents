@@ -2,6 +2,7 @@ import type { MouseEvent as ReactMouseEvent } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { AgentActivity, AgentAppearance, TabStatus } from '../components/AgentCard.js';
+import { resolveShownAgent } from '../components/cardBar.js';
 import {
   TERMINAL_DRAWER_DEFAULT_WIDTH_PX,
   TERMINAL_DRAWER_MAX_WIDTH_RATIO,
@@ -18,6 +19,9 @@ const DEFAULT_APPEARANCE: AgentAppearance = { palette: 0, hueShift: 0 };
 interface TerminalDrawerInputs {
   /** Agent ids with a live server-side PTY, in open order (control plane). */
   terminalAgentIds: number[];
+  /** The subset the office currently shows (the current project's). The shown
+   *  pane stays within it; the rest keep their panes mounted, out of sight. */
+  visibleTerminalAgentIds: number[];
   getOfficeState: () => OfficeState;
   agentTools: Record<number, ToolActivity[]>;
   agentStatuses: Record<number, string>;
@@ -76,6 +80,7 @@ export function clampDrawerWidth(preferredPx: number, viewportPx: number): numbe
  */
 export function useTerminalDrawer({
   terminalAgentIds,
+  visibleTerminalAgentIds,
   getOfficeState,
   agentTools,
   agentStatuses,
@@ -98,10 +103,16 @@ export function useTerminalDrawer({
   const widthPx = clampDrawerWidth(preferredWidthPx, viewportPx);
   const [connStatuses, setConnStatuses] = useState<Record<number, TerminalConnectionStatus>>({});
 
-  const shownAgentId =
-    activeAgentId !== null && terminalAgentIds.includes(activeAgentId)
-      ? activeAgentId
-      : (terminalAgentIds[0] ?? null);
+  // Shown panes, most recent first. A project switch hides the active agent;
+  // this is what brings back the one last shown in the project switched to.
+  const [recentAgentIds, setRecentAgentIds] = useState<number[]>([]);
+  const shownAgentId = resolveShownAgent(activeAgentId, recentAgentIds, visibleTerminalAgentIds);
+  useEffect(() => {
+    if (shownAgentId === null) return;
+    setRecentAgentIds((prev) =>
+      prev[0] === shownAgentId ? prev : [shownAgentId, ...prev.filter((id) => id !== shownAgentId)],
+    );
+  }, [shownAgentId]);
 
   // Reveal a newly-opened terminal. Launching is async — the toolbar sends
   // launchAgent and the server answers with terminalSessionOpened once the PTY
@@ -170,7 +181,12 @@ export function useTerminalDrawer({
   const getAppearance = useCallback(
     (id: number): AgentAppearance => {
       const ch = getOfficeState().characters.get(id);
-      return ch ? { palette: ch.palette, hueShift: ch.hueShift } : DEFAULT_APPEARANCE;
+      if (!ch) return DEFAULT_APPEARANCE;
+      return {
+        palette: ch.palette,
+        hueShift: ch.hueShift,
+        name: ch.agentName || ch.directoryName || undefined,
+      };
     },
     [getOfficeState],
   );

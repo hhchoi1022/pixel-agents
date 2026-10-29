@@ -62,6 +62,14 @@ export type AgentEvent =
     }
   | { kind: 'sessionEnd'; reason?: string };
 
+/** How a launched agent is known to the other local sessions: the session
+ *  name it goes by (a project lead's is `<project>/lead-<id>`) and, for the
+ *  superagent alone, the projects whose leads it relays between. */
+export interface LaunchPeers {
+  sessionName: string;
+  leadProjects?: string[];
+}
+
 // ── Hook-based Provider (CLIs with hooks APIs) ────────────────
 
 export interface HookProvider {
@@ -127,13 +135,21 @@ export interface HookProvider {
   getAllSessionRoots?(): string[];
   /** Glob pattern for session files (e.g., '*.jsonl'). */
   readonly sessionFilePattern?: string;
+  /** Ids of the sessions a running CLI process holds right now, wherever it was
+   *  started (another terminal, tmux). Resuming one of them would put two
+   *  processes on one transcript, so they are never offered for resume. */
+  getLiveSessionIds?(): Set<string>;
   /** Parse one line of a transcript file into an AgentEvent. */
   parseTranscriptLine?(line: string): AgentEvent | null;
-  /** Build CLI launch command for +Agent button. */
+  /** Build CLI launch command for +Agent button. `peers`, when given, names the
+   *  session and tells the agent how to find the rest of its project: every
+   *  session launched for the same project shares `projectName` as its name
+   *  prefix. `resume` continues the existing session `sessionId` (same id, same
+   *  transcript) instead of starting one under that id. */
   buildLaunchCommand?(
     sessionId: string,
     cwd: string,
-    opts?: { bypassPermissions?: boolean },
+    opts?: { bypassPermissions?: boolean; peers?: LaunchPeers; resume?: boolean },
   ): {
     command: string;
     args: string[];

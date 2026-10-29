@@ -20,9 +20,11 @@ import * as os from 'os';
 import * as path from 'path';
 
 import type { Directory } from '../../core/src/messages.js';
+import { normalizeProjectPath } from '../../core/src/normalizeProjectPath.js';
 import { readConfig, type UserDirectory, writeConfig } from './configPersistence.js';
-import { DIRECTORY_WRITE_FAILED_REASON } from './constants.js';
+import { DIRECTORY_WRITE_FAILED_REASON, SUPERAGENT_DIRECTORY_NAME } from './constants.js';
 import { directoryNameFor } from './hostDirectory.js';
+import { readProjectSubagents } from './projectSubagents.js';
 
 /** What a host contributes to the union. `source` is the union's business, so
  *  a host only says what and where. */
@@ -123,6 +125,105 @@ export function buildDirectoryUnion(
 /** The union for this host, read fresh from the shared config. */
 export function listDirectories(hostDirectories: HostDirectoryEntry[]): Directory[] {
   return buildDirectoryUnion(readConfig().directories, hostDirectories);
+}
+
+/** A project: a user-defined Directory other than the superagent's, named as
+ *  the user named it (the name leads its sessions' names, `<name>/lead-<id>`). */
+export interface Project {
+  name: string;
+  path: string;
+}
+
+/** The projects the office can switch between, sorted by name. */
+export function listProjects(): Project[] {
+  return readConfig()
+    .directories.filter((d) => d.name !== SUPERAGENT_DIRECTORY_NAME)
+    .map(({ name, path: dirPath }) => ({ name, path: dirPath }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** The project Directory sitting at `launchPath`, or undefined. */
+export function projectAt(launchPath: string): Project | undefined {
+  const key = normalizeDirectoryPath(launchPath);
+  return listProjects().find((p) => normalizeDirectoryPath(p.path) === key);
+}
+
+/** Whether `launchPath` is the superagent's Directory. */
+export function isSuperagentDirectory(launchPath: string): boolean {
+  const key = normalizeDirectoryPath(launchPath);
+  return readConfig().directories.some(
+    (d) => d.name === SUPERAGENT_DIRECTORY_NAME && normalizeDirectoryPath(d.path) === key,
+  );
+}
+
+/**
+ * The project the office has open, spelled as its Directory stores it (the
+ * office compares agent projects against that same string). undefined when
+ * none is picked or the picked one is no longer a project.
+ */
+export function currentProjectFolder(): string | undefined {
+  const cfg = readConfig();
+  const current = cfg.currentProject;
+  if (current === undefined) return undefined;
+  return listProjects().some((p) => p.path === current) ? current : undefined;
+}
+
+/** Open `projectPath` (one of listProjects) in the office. False when it is no
+ *  project or the config write failed. */
+export function setCurrentProject(projectPath: string): boolean {
+  if (!listProjects().some((p) => p.path === projectPath)) return false;
+  const cfg = readConfig();
+  if (cfg.currentProject === projectPath) return true;
+  cfg.currentProject = projectPath;
+  return writeConfig(cfg);
+}
+
+/** The project list and the open project, as every office is told it —
+ *  with the open project's own sub-agents when it defines any. */
+export function projectsMessage(): Record<string, unknown> {
+  const current = currentProjectFolder();
+  const subagents = current === undefined ? [] : readProjectSubagents(current);
+  return {
+    type: 'projectsLoaded',
+    paths: listProjects().map((p) => p.path),
+    current,
+    ...(subagents.length > 0 ? { subagents } : {}),
+  };
+}
+
+/**
+ * The project an agent belongs to. A launch into a project Directory is
+ * stamped with it (`projectPath`); anything else falls back to where its
+ * transcript says it ran. Teammates follow their lead in the office.
+ */
+export function agentProjectFolder(agent: {
+  projectPath?: string;
+  projectDir: string;
+}): string | undefined {
+  return agent.projectPath ?? projectFolderFor(agent.projectDir);
+}
+
+/**
+ * The project (one of listProjects) an agent's session ran in, or undefined
+ * when it belongs to none (the superagent among them). Matched through the
+ * agent's transcript folder, `~/.claude/projects/<hash of its cwd>/`, against
+ * each project's hash — as given and as resolved, since Claude hashes the
+ * physical path and a symlinked Directory would otherwise never match.
+ * Derived rather than persisted, so restored agents and adopted sessions get
+ * it for free.
+ */
+export function projectFolderFor(projectDir: string): string | undefined {
+  if (!projectDir) return undefined;
+  const hash = path.basename(projectDir).toLowerCase();
+  return listProjects().find(({ path: folder }) => {
+    const candidates = [folder];
+    try {
+      candidates.push(fs.realpathSync(folder));
+    } catch {
+      /* gone since it was registered */
+    }
+    return candidates.some((p) => normalizeProjectPath(p).toLowerCase() === hash);
+  })?.path;
 }
 
 /**

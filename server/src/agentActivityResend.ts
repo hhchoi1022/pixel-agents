@@ -43,6 +43,7 @@ export function resendAgentActivity(
         toolId,
         status,
         toolName,
+        subagentType: agent.subagentTypes?.get(toolId),
       });
     }
 
@@ -63,6 +64,7 @@ export function resendAgentActivity(
         toolName,
         runInBackground: true,
         isTeammateSpawn: agent.teammateSpawnToolIds?.has(toolId) || undefined,
+        subagentType: agent.subagentTypes?.get(toolId),
       });
     }
 

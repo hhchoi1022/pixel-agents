@@ -18,6 +18,18 @@ export function cardVariant(
   return 'default';
 }
 
+/** A saved card order from localStorage; [] on first run, unparseable junk,
+ *  or blocked storage. */
+export function loadCardOrder(storageKey: string): number[] {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+    return Array.isArray(parsed) ? parsed.filter((v): v is number => typeof v === 'number') : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Saved order first (dropping closed agents), then any new agents appended
  *  in creation order — so a reorder survives launches and closes. */
 export function mergeOrder(saved: readonly number[], live: readonly number[]): number[] {
@@ -31,10 +43,11 @@ export function mergeOrder(saved: readonly number[], live: readonly number[]): n
 }
 
 /**
- * The order with `dragId` moved to where the finger is: before the first
- * other card whose horizontal midpoint lies right of `x`, else last.
+ * The order with `dragId` moved to where the pointer is: before the first
+ * other card whose midpoint lies past `x` along the bar's axis, else last.
  * `midpointOf` returns a card's midpoint in the same coordinate space as `x`
- * (null for a card that isn't laid out, which is skipped).
+ * (null for a card that isn't laid out, which is skipped) — horizontal for the
+ * mobile bar, vertical (pass clientY) for the desktop column.
  */
 export function reorderByPointer(
   ids: readonly number[],
@@ -52,4 +65,18 @@ export function reorderByPointer(
     }
   }
   return [...others.slice(0, insertAt), dragId, ...others.slice(insertAt)];
+}
+
+/**
+ * The pane to show: the active agent's while it is in view, otherwise the one
+ * most recently shown among those in view — so switching projects returns to
+ * the agent last talked to there — and only then the first in view.
+ */
+export function resolveShownAgent(
+  activeAgentId: number | null,
+  recentAgentIds: readonly number[],
+  visibleAgentIds: readonly number[],
+): number | null {
+  if (activeAgentId !== null && visibleAgentIds.includes(activeAgentId)) return activeAgentId;
+  return recentAgentIds.find((id) => visibleAgentIds.includes(id)) ?? visibleAgentIds[0] ?? null;
 }

@@ -84,7 +84,7 @@ webview-ui/                          React 19 + Canvas UI (depends only on core/
       BottomToolbar.tsx, ZoomControls.tsx, SettingsModal.tsx, InfoModal.tsx,
       Tooltip.tsx, DebugView.tsx, ui/Button.tsx, ...
       AgentCard.tsx, AgentCardBar.tsx  Agent cards (mug shot + status dot); the right-edge bar on desktop/VS Code
-      cardBar.ts                     Pure card-bar rules: cardVariant, mergeOrder, reorderByPointer (Node-tested)
+      cardBar.ts                     Pure card-bar rules: cardVariant, mergeOrder, reorderByPointer, resolveShownAgent (Node-tested)
       TerminalDrawer.tsx             Desktop standalone: right-docked panel, cards as tabs
       TerminalPaneStack.tsx          Every agent's TerminalPane mounted, the shown one visible (both shells)
       TerminalPane.tsx               One xterm bound to one agent's PTY
@@ -229,8 +229,8 @@ Adding a new CLI integration is one subdirectory under `server/src/providers/hoo
 
 `core/asyncapi.yaml` is the contract. Pinned to **3.0.0** because `@asyncapi/modelina@5.10.1` declares `supportedVersions: ['3.0.0']` only; bumping to 3.1.0 produces `export type Root = any`. Revisit when Modelina ships 3.1.0 support.
 
-- **39 ServerMessage variants** (server → client): agent lifecycle, agent activity, sub-agent activity, team + context usage, assets, access (`officeAccess` — sent first on `webviewReady`; `readOnly` hides every control a read-only office would only have refused), settings (`bypassPermissionsUpdated` — the skip-permissions posture, broadcast to every office on change because every launch reads it) + directories (`directoriesLoaded`, `directorySaved` — a save's ack to its sender, carrying the entry as stored, whose name keys the Area mapping; `directoryRejected`, `directorySuggestions`), terminal, diagnostics.
-- **27 ClientMessage variants** (client → server): lifecycle (`webviewReady`, `launchAgent`, `focusAgent`, `closeAgent`), layout (`saveAgentSeats`, `saveLayout`, `exportLayout`, `importLayout`), settings (`setSoundEnabled`, `setHooksEnabled`, `setWatchAllSessions`, `setAlwaysShowLabels`, `setHooksInfoShown`, `setLastSeenVersion`, `setBypassPermissions`, `setShowHostDirectories` — whether the host's own Directories are listed, off by default; only the list is gated, launches still name agents after them), directories (`saveDirectory`, `removeDirectory`, `requestDirectorySuggestions`), terminal, discovery + assets, diagnostics.
+- **43 ServerMessage variants** (server → client): agent lifecycle, agent activity, sub-agent activity, team + context usage, assets, access (`officeAccess` — sent first on `webviewReady`; `readOnly` hides every control a read-only office would only have refused), settings (`bypassPermissionsUpdated` — the skip-permissions posture, broadcast to every office on change because every launch reads it) + directories (`directoriesLoaded`, `directorySaved` — a save's ack to its sender, carrying the entry as stored, whose name keys the Area mapping; `directoryRejected`, `directorySuggestions`), terminal, diagnostics.
+- **42 ClientMessage variants** (client → server): lifecycle (`webviewReady`, `launchAgent` — `resumeSessionId` relaunches a closed session with `--resume`, listed by `requestResumableSessions` → `resumableSessions`, `focusAgent`, `closeAgent`), layout (`saveAgentSeats`, `saveLayout`, `exportLayout`, `importLayout`), settings (`setSoundEnabled`, `setHooksEnabled`, `setWatchAllSessions`, `setAlwaysShowLabels`, `setHooksInfoShown`, `setLastSeenVersion`, `setBypassPermissions`, `setShowHostDirectories` — whether the host's own Directories are listed, off by default; only the list is gated, launches still name agents after them), directories (`saveDirectory`, `removeDirectory`, `requestDirectorySuggestions`), projects (`requestProjects`, `setCurrentProject` — the projects are the user Directories other than `superagent`; the open one is `config.currentProject`, answered as `projectsLoaded`), terminal, discovery + assets, diagnostics.
 
 Both unions use `oneOf` with `discriminator: type`. Every concrete message sets `additionalProperties: false`.
 
@@ -687,3 +687,90 @@ Supporting: `wall-tile-editor.html` (wall sprite editing), `jsonl-viewer.html` (
 - npm package: `pixel-agents` (CLI bin: `pixel-agents`)
 - GitHub: `https://github.com/pixel-agents-hq/pixel-agents`
 - License: MIT
+
+---
+
+# 로컬 배포 & 유지보수 (이 서버 전용)
+
+너는 pixel-agents(Claude Code 에이전트들을 픽셀 오피스로 보여주는 시각화 도구)를
+유지·수정하는 에이전트다. 7DT 과학 프로젝트와는 **무관하며**, 이 도구 자체의
+레이아웃·렌더링·서버 통계 기능만 다룬다.
+
+## 중요 경로
+
+- **소스 (여기)** `/home/hhchoi1022/code/pixel-agents-src` — 커스텀 빌드 소스 트리
+- **레이아웃 작업** `./layouts/` — 레이아웃 생성 스크립트(`gen_layout_*.py`)와 버전별 백업 JSON
+- **라이브 레이아웃** `~/.pixel-agents/layout.json` — 서버가 실제로 읽는 파일
+- **설정** `~/.pixel-agents/config.json` — 디렉토리 등록, Area 매핑 등
+- **랙 설정** `~/.pixel-agents/server-room.json` — `col`/`row`(랙 위치, 타일 단위·소수 허용), `mounts`, `name`(이 호스트 그룹명, 기본 hostname), `remotes: [{name, statsFile}]`(원격 호스트)
+- **Lyman 통계 파일** `/lyman/data1/factory_hhchoi/.pixel-agents/lyman-stats.json` — Lyman의 crontab(매분 `flock -n /tmp/lyman-stats.lock python3 …/scripts/remote-system-stats.py --interval 10 …`)이 10초마다 갱신
+- **서버 실행 노드** `/home/hhchoi1022/miniconda3/envs/pixel-agents/bin/node` (conda env `pixel-agents`)
+- **서버 로그** `/home/hhchoi1022/code/pixel-agents-official.log`
+
+## 주요 소스 파일
+
+- 서버 통계 수집: `server/src/systemStats.ts` (CPU/RAM/디스크/유저별 사용량 + `remotes`의 statsFile 비동기 읽기 → `systemStats` 브로드캐스트; 파일이 max(30 s, 간격×3)보다 오래되면 OFFLINE). 원격 호스트 쪽 수집기: `scripts/remote-system-stats.py` (그 호스트에서 실행, 공유 스토리지에 JSON을 원자적으로 교체)
+- 랙 렌더링: `webview-ui/src/office/engine/serverRoom.ts` (호스트별 그룹: WFM 위, 원격(LYMAN)은 7타일씩 아래로; 랙 5개를 붙여 세우고 그룹명 헤더, 오프라인 원격은 점선 OFFLINE 윤곽. 위치는 server-room.json 앵커 — 바닥 추적 없음). 색은 `constants.ts` `SERVER_RACK_COLORS`
+- 표시 스위치: `core/src/constants.ts` `SERVER_RACKS_ENABLED`(켜짐) / `PROJECT_ALERTS_ENABLED`(켜짐) / `STATUS_BOARD_ENABLED`(꺼짐 — 파이프라인 카드·WEB 칩의 서버 폴러와 그리기·오버레이를 끔, 코드는 보존)
+- 프로젝트별 표시: `~/.pixel-agents/project-displays.json` (`server/src/projectDisplays.ts`) — `{col,row,cols, projects: {<Directory 이름>: {alerts: {statusFile, eventsFile, dashboardUrl}}}}`. 열린 프로젝트(`currentProject`)의 것만 왼쪽 아래 band에 그린다. 현재 BRIDGE만 alerts(안테나 야드, `bridge-ops-status/1` 스키마)를 가진다. 웹페이지는 프로젝트마다 키오스크 하나(`webview-ui/src/office/engine/projectWebKiosk.ts` + `ProjectWebKioskOverlay.tsx`, 스위치 `PROJECT_WEB_PAGES_ENABLED`): 열린 프로젝트의 ports.md 첫 상시 행(담당 = Directory 이름)을 같은 band에 — alerts가 있으면 안테나 야드 아래 — 그리고, 주소·용도·실행 여부(pid)를 보여 주며 클릭하면 새 탭으로 연다
+- 알림 안테나: `webview-ui/src/office/engine/bridgeFeeds.ts` + `BridgeFeedOverlay.tsx` (프로젝트별 스냅샷, project-displays.json 앵커에 그림; 서버 `bridgeOps.ts`가 프로젝트마다 `bridgeOpsStatus{project, anchor, dashboardUrl}` 브로드캐스트)
+- 상태판 (현재 꺼짐, 왼쪽 아래 빈칸에 바닥 없이 다시 넣을 예정): `webview-ui/src/office/engine/statusBoard.ts` (FLOOR_2 구역 자동추적 — ezphot/NGSF-7DT/BRIDGE 최근 결과 카드 + 카드별 WEB 칩), 클릭 패널 `StatusBoardOverlay.tsx`·`WebPagesOverlay.tsx`
+- 상태판 데이터: `server/src/pipelineStatus.ts` (각 에이전트 산출물 폴더를 읽기 전용으로 스캔 → `pipelineStatus` 브로드캐스트), `bridgeOps.ts`, `webPages.ts`
+- 프로젝트 = 저장소: `superagent`를 뺀 user Directory 하나하나가 프로젝트다(`directories.ts` `listProjects`). 열린 프로젝트는 `config.json`의 `currentProject`에 저장되고, 배지 메뉴(`setCurrentProject`)나 다른 프로젝트로의 런치로 바뀐다. 다른 프로젝트의 에이전트는 숨기고, 어느 프로젝트에도 속하지 않는 에이전트(superagent 등)는 항상 보인다
+- 에이전트 간 소통: 프로젝트로 띄운 리더는 `claude --name <프로젝트>/lead-<id4>`(안내 프롬프트 없음 — 저장소 하네스가 자기 팀을 돌린다), superagent Directory(`code/superagent`)로 띄운 세션은 `superagent-<id4>` + 리더 이름 패턴과 프로젝트 목록을 알려 주는 `--append-system-prompt`로 실행된다 — `standaloneAgentLauncher.ts` `launchPeers`, `claude.ts` `superagentSystemPrompt`. 그 밖의 Directory는 이름 없이 실행
+- 상주 서브에이전트: 열린 프로젝트의 `<repo>/.claude/agents/*.md`(최상위 파일만, `_`로 시작하면 제외; 이름은 frontmatter `name`) 하나마다 캐릭터를 작업방 책상에 아래 줄부터 앉혀 둔다(흐리게 대기). `subagent_type`이 그 이름인 호출은 새 Subtask 대신 그 캐릭터를 깨우고, 끝나면 다시 대기. 서버 `projectSubagents.ts`가 `projectsLoaded.subagents`로 보내고 10초마다 변경을 확인, 웹뷰 `officeState.setResidents`/`addSubagent`가 연결한다
+- 웹페이지 포트 기록부: **pixel-agents가 소유**하는 `~/.pixel-agents/ports.md`(`server/src/webPages.ts` `webPagesRegistryPath()`, 프로젝트 전환과 무관). 표에는 상시 포트만 사람이 적는다 — `포트 | 담당(Directory 이름) | 용도 | URL | 서빙 디렉토리 | 상태(상시/종료)`, PID·시작 시각은 적지 않는다. 표는 이 저장소 세션만 고치고, 다른 프로젝트는 상시 포트 추가·변경·폐지를 superagent를 통해 요청한다. 실행 여부·PID는 서버가 8760–8780(`WEB_PAGES_SCAN_PORT_MIN/MAX`) listener를 `/proc/net/tcp{,6}` + `/proc/<pid>/fd`로 읽기 전용 조사해 채운다: 표에 있는 포트는 `live`+`pid`, 표의 서빙 디렉토리도 담당 프로젝트 Directory도 아닌 프로세스가 점유하면 `foreignHolder`, 표에 없는 listener는 `일회성`(state `oneoff`, pid·cwd·command·소속 프로젝트). 조사만 하고 listener를 죽이거나 재시작하지 않는다. 폴러(`startWebPages`)와 패널은 `STATUS_BOARD_ENABLED`가 꺼져 있어 지금은 돌지 않는다 — 다시 켤 때 웹뷰 `office/engine/webPages.ts`가 새 필드(`oneoff`, `foreignHolder`, cwd/command)를 읽도록 맞춰야 한다
+- 세션 재개: 런치 드로어의 `↻ Resume session`(standalone 전용) → `server/src/resumableSessions.ts`가 Directory별 transcript 중 살아 있지 않은 세션(오피스 + `~/.claude/sessions/<pid>.json`의 live pid 제외)을 최신순으로 나열 → `launchAgent{resumeSessionId}` → 런처가 `claude --resume <id>`로 같은 id·같은 이름(`-<id4>`)으로 다시 띄우고 transcript 끝부터 추적
+- 유저 사용량 패널: `webview-ui/src/components/ServerRackOverlay.tsx` (CPU/RAM 랙 클릭 패널)
+- 메시지 계약: `core/asyncapi.yaml` → 생성물 `core/src/messages.ts` (CI 드리프트 체크 있음)
+- 렌더러: `webview-ui/src/office/engine/renderer.ts`
+
+## 빌드 & 재시작 (필수 절차)
+
+PATH에 conda env의 node가 있어야 한다:
+
+```bash
+export PATH=/home/hhchoi1022/miniconda3/envs/pixel-agents/bin:$PATH
+```
+
+- **서버(CLI) 변경 시**: `node esbuild.js --production`
+- **웹뷰(렌더/UI) 변경 시**: `cd webview-ui && npm run build`
+- **서버 재시작**:
+  ```bash
+  PID=$(ss -tlnp | grep ':3456' | grep -oP 'pid=\K[0-9]+' | head -1); [ -n "$PID" ] && kill $PID; sleep 2
+  cd /home/hhchoi1022/code/pixel-agents-src
+  nohup node dist/cli.js --port 3456 > /home/hhchoi1022/code/pixel-agents-official.log 2>&1 &
+  ```
+- 브라우저는 캔버스/번들 변경 후 **하드 리프레시(Ctrl+Shift+R)** 해야 반영된다.
+- ⚠️ 오피스에서 띄운 에이전트(이 저장소의 pixelagents 세션 포함)는 서버의 자식 PTY라서 **재시작하면 함께 종료**된다.
+  재시작 전 사용자 확인을 받고, 재시작 명령은 `setsid`로 분리된 스크립트로 실행한다 (실행한 세션이 먼저 죽어도 서버가 다시 뜨도록).
+- 미리보기: 격리 HOME(레이아웃 + config의 directories만 복사)으로 `node dist/cli.js --port 3499 --no-terminal`을 띄워 확인한다.
+
+## 레이아웃 수정 워크플로우
+
+1. `layouts/`의 생성 스크립트로 새 레이아웃 JSON을 만들거나, 라이브 JSON을 직접 편집한다.
+2. **반드시 서버를 먼저 내린 뒤** `~/.pixel-agents/layout.json`에 덮어쓴다.
+   ⚠️ 서버가 떠 있는 채로 파일을 바꾸면, 서버가 메모리의 구버전 레이아웃을
+   되써서 변경이 날아간다. 순서: **서버 kill → 파일 교체 → 서버 start.**
+3. 적용 전 현재 라이브 레이아웃을 `layouts/`에 백업해 둔다 (`gw-office-v*.json`).
+4. 타일 값: 0=벽, 255=빈공간(void), 1~9=바닥 패턴. 벽으로 둘러싸이면 캐릭터가 못 들어간다.
+5. 가구 배치 검증은 생성 스크립트 안의 footprint/벽충돌/표면 검사를 참고한다.
+   사용자가 UI에서 직접 편집한 가구가 있으므로, **새로 추가하는 가구만 검증**하고
+   기존 가구는 건드리지 않는다.
+6. 현재 맵(v16, 30×30): 오른쪽 위 superagent 방(책상 구역 + 아래 휴식 소파), 오른쪽 아래 작업방(리드 2석 + 책상 유닛 2×2), 둘 다 가운데 문 기준 좌우 대칭. 왼쪽은 바닥 없는 void(`VOID_TILE_FILL_COLOR`로 칠함) — 위에 서버 랙, 아래는 상태판 자리. 상태판 코드는 아직 FLOOR_2 바닥을 추적하므로, 다시 켤 때 위치 지정 방식을 바꿔야 한다.
+7. Area: superagent / ezphot 두 개. areaMappings: superagent·pixelagents → superagent, ezphot·BRIDGE·NGSF-7DT → ezphot (한 번에 한 프로젝트만 보이므로 작업방 공유). 최신 생성 스크립트는 `layouts/gen_layout_v16.py` (라이브 JSON에서는 펫·색만 읽고 맵을 새로 생성).
+
+## 경계
+
+- 이 저장소 밖(7DT 프로젝트 코드: BRIDGE/ezphot/NGSF-7DT 등)은 건드리지 않는다.
+- 사용자가 직접 UI 에디터로 바꾼 레이아웃을 존중한다. 큰 변경 전 백업은 필수다.
+
+## 프로젝트 간 소통
+
+- 다른 프로젝트(BRIDGE · ezphot · NGSF-7DT · pixelagents)에 보내는 요청·질문·통보는 그 프로젝트 세션(`<project>/lead-*`, `claude-HC_*` 등)에
+  직접 SendMessage하지 않고 **superagent**에게 보낸다. superagent가 전달해 온 요청에 대한 답도 superagent에게 보낸다.
+- superagent = pixel-agents 오피스가 `~/code/superagent`에서 띄운 `superagent-<id4>` 세션. 예전 7DT_SN_ToO 설정
+  (지금은 `superagent/_archive/2026-10-28/7DT_SN_ToO_project`, `ports.md` 포함)과는 다르다.
+- 보내기 전에 사용자에게 내용을 확인받는다. 길면 이 저장소의 `_workspace/upstream/<대상>_<slug>.md`에 쓰고 메시지에는 경로만 넣는다.
+- `ListAgents`에 `superagent-*`가 없으면 보내지 않고, 사용자에게 superagent를 띄워 달라고 한다.
+- 다른 저장소의 코드는 읽어도 되지만 고치지 않는다.

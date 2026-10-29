@@ -121,6 +121,8 @@ components:
         - $ref: '#/components/schemas/DirectorySaved'
         - $ref: '#/components/schemas/DirectoryRejected'
         - $ref: '#/components/schemas/DirectorySuggestions'
+        - $ref: '#/components/schemas/ProjectsLoaded'
+        - $ref: '#/components/schemas/ResumableSessions'
         # Terminal (standalone embedded terminal control plane)
         - $ref: '#/components/schemas/TerminalAvailability'
         - $ref: '#/components/schemas/TerminalSessionOpened'
@@ -157,6 +159,9 @@ components:
         - $ref: '#/components/schemas/SaveDirectory'
         - $ref: '#/components/schemas/RemoveDirectory'
         - $ref: '#/components/schemas/RequestDirectorySuggestions'
+        - $ref: '#/components/schemas/RequestProjects'
+        - $ref: '#/components/schemas/SetCurrentProject'
+        - $ref: '#/components/schemas/RequestResumableSessions'
         - $ref: '#/components/schemas/RequestDiagnostics'
       discriminator: type
 
@@ -196,6 +201,14 @@ components:
           type: integer
         directoryName:
           type: string
+        projectPath:
+          type: string
+          description: >-
+            The project the agent belongs to: the project Directory (one of
+            `projectsLoaded.paths`) it was launched into or its session ran in;
+            absent for agents outside every project (the superagent among
+            them), which show in every project. The office otherwise shows
+            only the current project's agents.
         isExternal:
           type: boolean
         palette:
@@ -249,6 +262,11 @@ components:
         directoryNames:
           type: object
           description: Map of agent ID (string) to Directory name.
+          additionalProperties:
+            type: string
+        projectPaths:
+          type: object
+          description: Map of agent ID (string) to its project Directory's path (see `agentCreated.projectPath`).
           additionalProperties:
             type: string
         externalAgents:
@@ -308,6 +326,11 @@ components:
             True when this spawn tool call carries a name, making the spawn a
             Teammate-to-be. The office must not create a Subtask sub-character
             for it — a teammate character will represent the spawn instead.
+        subagentType:
+          type: string
+          description: >-
+            The spawn call's agent type (e.g. "ezphot-qa"), shown as the
+            Sub-agent's name. Absent for non-spawn tools.
 
     AgentToolDone:
       description: Agent finished executing a tool.
@@ -885,6 +908,75 @@ components:
           items:
             type: string
 
+    ResumableSessions:
+      description: |
+        Sessions that ran in one of the Directories and are not live in the
+        office, most recently active first. Sent point-to-point in reply to
+        `requestResumableSessions`; picking one is a `launchAgent` carrying its
+        `sessionId` as `resumeSessionId`.
+      type: object
+      additionalProperties: false
+      required: [type, sessions]
+      properties:
+        type:
+          const: resumableSessions
+        sessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResumableSession'
+
+    ResumableSession:
+      type: object
+      additionalProperties: false
+      required: [sessionId, directoryPath, directoryName, lastActiveMs]
+      properties:
+        sessionId:
+          type: string
+        directoryPath:
+          type: string
+          description: The Directory the session ran in (where it resumes).
+        directoryName:
+          type: string
+        title:
+          type: string
+          description: The session's name (`--name` or `/rename`), when it has one.
+        lastPrompt:
+          type: string
+          description: The last prompt the user sent, for telling sessions apart.
+        lastActiveMs:
+          type: number
+          description: When the transcript was last written (epoch ms).
+
+    ProjectsLoaded:
+      description: |
+        The projects the office can switch between — every user-defined
+        Directory except the superagent's — and the one it has open. Sent on
+        `webviewReady`, in reply to `requestProjects`, and to every office
+        whenever the open project or the Directories change.
+      type: object
+      additionalProperties: false
+      required: [type, paths]
+      properties:
+        type:
+          const: projectsLoaded
+        paths:
+          type: array
+          description: The project Directories' paths as stored, sorted by Directory name.
+          items:
+            type: string
+        current:
+          type: string
+          description: The open project (one of `paths`). Absent when none is picked, and then every agent shows.
+        subagents:
+          type: array
+          description: >-
+            The open project's own sub-agents (`<project>/.claude/agents/*.md`,
+            frontmatter `name`), in file order. Each keeps a resident character
+            at the project's desks, which a spawn naming it as `subagent_type`
+            wakes instead of a transient Subtask. Absent when it defines none.
+          items:
+            type: string
+
     AgentDiagnostics:
       description: Connection diagnostics for all agents (response to requestDiagnostics).
       type: object
@@ -989,6 +1081,12 @@ components:
         directoryPath:
           type: string
           description: Path of the Directory to launch into.
+        resumeSessionId:
+          type: string
+          description: |
+            Resume this session (one of `resumableSessions.sessions`) instead of
+            starting a new one. It must have run in `directoryPath` and not be
+            live in the office; otherwise the launch is refused.
 
     FocusAgent:
       description: Focus an agent's terminal.
@@ -1299,6 +1397,44 @@ components:
       properties:
         type:
           const: requestDirectorySuggestions
+
+    RequestResumableSessions:
+      description: >-
+        Ask the host for the sessions the launch drawer can resume; it replies
+        `resumableSessions` to this client only. Sent when the drawer's resume
+        list opens, so a session closed since shows up.
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          const: requestResumableSessions
+
+    RequestProjects:
+      description: >-
+        Ask the host for the projects the office can switch between; it replies
+        `projectsLoaded` to this client only. Sent when the project badge's menu
+        opens.
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          const: requestProjects
+
+    SetCurrentProject:
+      description: >-
+        Open another project (one of `projectsLoaded.paths`) in every office.
+        Accepted switches are broadcast as `projectsLoaded`; a refused one is
+        answered to this client alone with the project still open.
+      type: object
+      additionalProperties: false
+      required: [type, path]
+      properties:
+        type:
+          const: setCurrentProject
+        path:
+          type: string
 
     SetShowAreas:
       description: Toggle the Areas overlay (translucent rendering on top of the office).

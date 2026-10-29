@@ -43,6 +43,15 @@ export const SELECTED_OUTLINE_ALPHA = 1.0;
 export const HOVERED_OUTLINE_ALPHA = 0.5;
 /** Headless agents (adopted, no terminal to focus) render slightly translucent. */
 export const HEADLESS_CHARACTER_ALPHA = 0.5;
+/** A resident sub-agent with no spawn bound to it renders dimmed at its desk. */
+export const RESIDENT_IDLE_ALPHA = 0.6;
+/** Resident sub-agents' character ids count down from here, clear of the
+ *  ordinary sub-agents' (from -1 down). */
+export const RESIDENT_ID_START = -1_000_000;
+/** Residents past the first palette round repeat the palettes hue-shifted:
+ *  base + round × step degrees (mod 360), never 0 so they differ from round 0. */
+export const RESIDENT_HUE_SHIFT_BASE_DEG = 45;
+export const RESIDENT_HUE_SHIFT_STEP_DEG = 97;
 export const GHOST_PREVIEW_SPRITE_ALPHA = 0.5;
 export const GHOST_PREVIEW_TINT_ALPHA = 0.25;
 export const SELECTION_DASH_PATTERN: [number, number] = [4, 3];
@@ -61,6 +70,9 @@ export const SEAT_OWN_COLOR = 'rgba(0, 127, 212, 0.35)';
 export const SEAT_AVAILABLE_COLOR = 'rgba(0, 200, 80, 0.35)';
 export const SEAT_BUSY_COLOR = 'rgba(220, 50, 50, 0.35)';
 export const GRID_LINE_COLOR = 'rgba(255,255,255,0.12)';
+/** Fill for VOID tiles inside the grid, so the whole map reads as one square
+ *  set apart from the page backdrop. */
+export const VOID_TILE_FILL_COLOR = '#4a4e57';
 export const VOID_TILE_OUTLINE_COLOR = 'rgba(255,255,255,0.08)';
 export const VOID_TILE_DASH_PATTERN: [number, number] = [2, 2];
 export const GHOST_BORDER_HOVER_FILL = 'rgba(60, 130, 220, 0.25)';
@@ -477,6 +489,10 @@ export const TERMINAL_SEL_HANDLE_WIDTH_PX = 24;
 /** Side of a selection handle's square knob (above the start bar, below the
  *  end bar). Feeds the `.terminal-sel-handle` CSS through --sel-knob. */
 export const TERMINAL_SEL_HANDLE_KNOB_PX = 12;
+/** How long the click-to-copy pill (a refused OSC 52 write) stays up. */
+export const TERMINAL_COPY_FALLBACK_MS = 8000;
+/** The click-to-copy pill's distance from the pane top. */
+export const TERMINAL_COPY_FALLBACK_TOP_PX = 8;
 /** Copy-flowing (flowCopy.ts) judges "the next word would not have fit on
  *  the row above" against `cols` minus this: Claude Code wraps prose a few
  *  columns short of the terminal width (its own gutters). Too small and real
@@ -514,6 +530,11 @@ export const DROPDOWN_VIEWPORT_MARGIN_PX = 8;
 /** localStorage key for the mobile bar's custom card order (per device — a
  *  presentation preference, deliberately not synced through the server). */
 export const MOBILE_CARD_ORDER_STORAGE_KEY = 'pixel-agents.mobileCardOrder';
+/** localStorage key for the desktop card bar's drag-to-reorder order (kept
+ *  apart from the mobile one — the two bars are laid out differently). */
+/** Tab title (and the badge) while no project is open. */
+export const DEFAULT_DOCUMENT_TITLE = 'Pixel Agents';
+export const DESKTOP_CARD_ORDER_STORAGE_KEY = 'pixel-agents.desktopCardOrder';
 /** Breathing room kept between a card and the scroller edge when the bar
  *  auto-scrolls the focused agent's card into view. */
 export const CARD_SCROLL_INTO_VIEW_MARGIN_PX = 8;
@@ -560,3 +581,138 @@ export const VISUAL_VIEWPORT_FULL_EPSILON_PX = 1;
  *  (with an editable focused) = the software keyboard is up. Well above an
  *  address bar collapsing (~56 px), well below any on-screen keyboard. */
 export const KEYBOARD_MIN_HEIGHT_PX = 150;
+
+// ── Server racks (office/engine/serverRoom.ts) ──
+/** Cabinet, LED, gauge and label colours of the canvas-drawn racks. */
+export const SERVER_RACK_COLORS = {
+  frame: '#343a46',
+  frameTop: '#4a5160',
+  cavity: '#14171d',
+  unitFace: '#232834',
+  unitEdge: '#2e3542',
+  bay: '#10131a',
+  ledIdle: '#2e4636',
+  ledPower: '#4caf6d',
+  led: '#4caf6d',
+  ledIo: '#e0a830',
+  segOff: '#1b202a',
+  gaugeLow: '#4caf6d',
+  gaugeMid: '#e0a830',
+  gaugeHigh: '#e05548',
+  plinth: '#171b22',
+  vent: '#3a4250',
+  text: '#e6e9f5',
+  textShadow: '#0a0a14',
+  groupBase: '#1d2129',
+  slotOutline: 'rgba(230,233,245,0.25)',
+  slotText: 'rgba(230,233,245,0.45)',
+} as const;
+
+// ── Status board (office/engine/statusBoard.ts, StatusBoardOverlay) ──
+/** The FLOOR_2 region is the board's zone (as FLOOR_1 is the racks'): the
+ *  alert-feed yard fills its top, the pipeline cards its bottom. */
+export const STATUS_BOARD_FLOOR = 2;
+/** ezphot gallery server (fixed allocation, BRIDGE ports.md). */
+export const EZPHOT_VIZ_URL = 'http://127.0.0.1:8765/ezphot/';
+/** ngsf-qa report server (fixed allocation, BRIDGE ports.md). */
+export const NGSF_QA_URL = 'http://127.0.0.1:8766/ngsf-7dt/';
+/** Card status colours; every state is also spelled out in text. */
+export const PIPELINE_STATE_COLORS = {
+  good: '#0ca30c',
+  busy: '#4f9cff',
+  warn: '#fab219',
+  bad: '#d03b3b',
+  idle: '#8a8f9e',
+} as const;
+/** Must match the server's PIPELINE_STATUS_RECENT_DAYS (the BRIDGE count). */
+export const PIPELINE_RECENT_DAYS = 7;
+export const STATUS_BOARD_COLORS = {
+  board: '#1b1f27',
+  boardEdge: '#3a4150',
+  card: '#14171d',
+  cardEdge: '#2e3542',
+  header: '#e6e9f5',
+  text: '#c9cedb',
+  muted: '#8a90a0',
+  chip: '#232834',
+  chipEdge: '#4a5160',
+  textShadow: '#0a0a14',
+} as const;
+
+// ── BRIDGE antenna yard (office/engine/bridgeFeeds.ts, BridgeFeedOverlay) ──
+/** A diagnosis report younger than this may still be being written (the
+ *  diagnosing agent takes up to ~25 min). */
+export const BRIDGE_DIAGNOSIS_WRITING_MS = 25 * 60 * 1000;
+/** Feed state colours (BRIDGE STATUS_SCHEMA palette) — always drawn with an
+ *  icon too, never colour alone. */
+export const BRIDGE_FEED_STATE_COLORS = {
+  ok: '#0ca30c',
+  quiet: '#8a8f9e',
+  unknown: '#fab219',
+  stalled: '#ec835a',
+  down: '#d03b3b',
+} as const;
+/** Screen colour when the monitor itself is dead or there is no data. */
+export const BRIDGE_FEED_STALE_COLOR = '#565b73';
+export const BRIDGE_YARD_COLORS = {
+  pad: '#2a2f3a',
+  padTop: '#3a4150',
+  padEdge: '#171b22',
+  cabinet: '#343a46',
+  cabinetTop: '#4a5160',
+  screen: '#10131a',
+  dish: '#c9cedb',
+  dishShade: '#8a90a0',
+  mast: '#5a6170',
+  feedLedOff: '#2e4636',
+  text: '#e6e9f5',
+  textShadow: '#0a0a14',
+} as const;
+/** Feed panel (DOM) colours. */
+export const BRIDGE_PANEL_COLORS = {
+  bg: '#14161f',
+  border: '#565b73',
+  heading: '#8ec7ff',
+  muted: '#9399b2',
+  text: '#ffffff',
+  bar: '#4caf6d',
+  barEmpty: '#232834',
+} as const;
+
+// ── Project web pages (office/engine/webPages.ts, WebPagesOverlay) ──
+export const WEB_PAGE_COLORS = {
+  live: '#4caf6d',
+  dead: '#d03b3b',
+  warn: '#fab219',
+  muted: '#9399b2',
+  heading: '#8ec7ff',
+  text: '#ffffff',
+} as const;
+/** Server rack per-user usage panel (DOM). */
+export const SERVER_RACK_PANEL_COLORS = {
+  bg: '#14161f',
+  text: '#ffffff',
+  border: '#565b73',
+  heading: '#8ec7ff',
+  muted: '#9399b2',
+  value: '#a6e3a1',
+} as const;
+/** The open project's web page kiosk (canvas). */
+export const WEB_KIOSK_COLORS = {
+  bezel: '#343a46',
+  bezelTop: '#4a5160',
+  bezelEdge: '#171b22',
+  chrome: '#232833',
+  dot: '#5a6170',
+  screen: '#10131a',
+  url: '#8ec7ff',
+  text: '#e6e9f5',
+  muted: '#9399b2',
+  textShadow: '#0a0a14',
+  live: '#4caf6d',
+  dead: '#d03b3b',
+  warn: '#fab219',
+  leg: '#5a6170',
+} as const;
+/** Group heading for registry rows no status-board card claims. */
+export const WEB_PAGES_UNMATCHED_LABEL = '기타';

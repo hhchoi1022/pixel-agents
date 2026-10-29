@@ -149,7 +149,9 @@ export function ToolOverlay({
   const hoveredId = officeState.hoveredAgentId;
 
   // All character IDs
-  const allIds = [...agents, ...subagentCharacters.map((s) => s.id)];
+  const allIds = [
+    ...new Set([...agents, ...subagentCharacters.map((s) => s.id), ...officeState.residentIds()]),
+  ];
 
   return (
     <>
@@ -233,6 +235,7 @@ export function ToolOverlay({
         const hasWaitingBubble = ch.bubbleType === 'waiting';
         const subHasPermission = isSub && ch.bubbleType === 'permission';
         let activityText: string;
+        const subChar = isSub ? subagentCharacters.find((s) => s.id === id) : undefined;
         if (hasWaitingBubble && ch.waitingAwaitingInput) {
           // Idle, waiting on the user -> dedicated label. A finished turn (Stop)
           // shows only the checkmark and falls through to the normal idle text.
@@ -243,11 +246,15 @@ export function ToolOverlay({
           } else {
             // Hover shows the subtask title; SELECTING the sub reveals its live
             // tool activity (watched sub-agents stream it via subagentToolStart).
-            const sub = subagentCharacters.find((s) => s.id === id);
-            const rows = sub ? subagentTools[sub.parentAgentId]?.[sub.parentToolId] : undefined;
+            const rows = subChar
+              ? subagentTools[subChar.parentAgentId]?.[subChar.parentToolId]
+              : undefined;
             const activeRow =
               isSelected && rows ? [...rows].reverse().find((t) => !t.done) : undefined;
-            activityText = activeRow?.status ?? (sub?.label || 'Subtask');
+            // A resident between spawns has no sub entry: it is just idle.
+            activityText =
+              activeRow?.status ??
+              (subChar?.label || (ch.residentType !== undefined ? 'Idle' : 'Subtask'));
           }
         } else {
           activityText = getActivityText(
@@ -273,8 +280,10 @@ export function ToolOverlay({
           dotColor = 'var(--color-status-active)';
         }
 
-        // Team info
-        const teamRoleLabel = ch.isTeamLead ? 'LEAD' : ch.agentName || null;
+        // Team info — a Sub-agent shows its agent type in the same slot
+        const teamRoleLabel = ch.isTeamLead
+          ? 'LEAD'
+          : ch.agentName || subChar?.agentType || ch.residentType || null;
         const hasExtraLines = !!(ch.directoryName || teamRoleLabel);
 
         // Context gauge. Every agent gets one — lead, teammate, adopted,
@@ -292,7 +301,7 @@ export function ToolOverlay({
                 left: screenX,
                 top: screenY - (hasExtraLines ? 34 : 28),
                 pointerEvents: isSelected ? 'auto' : 'none',
-                opacity: alwaysShowOverlay && !isSelected && !isHovered ? (isSub ? 0.5 : 0.75) : 1,
+                opacity: alwaysShowOverlay && !isSelected && !isHovered ? 0.75 : 1,
                 zIndex: isSelected ? OVERLAY_LABEL_SELECTED_Z_INDEX : OVERLAY_LABEL_Z_INDEX,
               }}
               data-testid="agent-overlay"
@@ -318,6 +327,11 @@ export function ToolOverlay({
                       {teamRoleLabel}
                     </span>
                   )}
+                  {ch.directoryName && (
+                    <span className="text-2xs leading-none overflow-hidden text-ellipsis block">
+                      {ch.directoryName}
+                    </span>
+                  )}
                   <span
                     className="overflow-hidden text-ellipsis block leading-none"
                     style={{
@@ -327,11 +341,6 @@ export function ToolOverlay({
                   >
                     {activityText}
                   </span>
-                  {ch.directoryName && (
-                    <span className="text-2xs leading-none overflow-hidden text-ellipsis block">
-                      {ch.directoryName}
-                    </span>
-                  )}
                 </div>
                 {isSelected && !isSub && (
                   <Button

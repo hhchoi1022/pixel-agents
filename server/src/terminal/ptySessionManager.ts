@@ -20,6 +20,7 @@ import {
   TERMINAL_KILL_GRACE_MS,
   TERMINAL_MIRROR_SCROLLBACK_LINES,
   TERMINAL_SHUTDOWN_SLACK_MS,
+  TERMINAL_STRIPPED_ENV_VARS,
   TERMINAL_TERM_NAME,
 } from '../constants.js';
 import type { IPty, PtyModule } from './ptyModule.js';
@@ -338,6 +339,7 @@ function spawnPty(
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) env[key] = value;
   }
+  for (const key of TERMINAL_STRIPPED_ENV_VARS) delete env[key];
   Object.assign(env, options.env ?? {}, { TERM: TERMINAL_TERM_NAME });
 
   return module.spawn(options.command, options.args, {

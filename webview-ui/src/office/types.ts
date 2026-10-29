@@ -54,6 +54,8 @@ export interface Seat {
   /** Direction character faces when sitting (toward adjacent desk) */
   facingDir: Direction;
   assigned: boolean;
+  /** Pinned chair: the agent seated here stays put when idle instead of wandering */
+  pinned: boolean;
 }
 
 export interface FurnitureInstance {
@@ -119,6 +121,8 @@ export interface PlacedFurniture {
   row: number;
   /** Optional color override for furniture */
   color?: ColorValue;
+  /** Chairs only: agents seated here don't wander when idle */
+  pinned?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -217,6 +221,10 @@ export interface Character {
   isSubagent: boolean;
   /** Parent agent ID if this is a sub-agent, null otherwise */
   parentAgentId: number | null;
+  /** A resident sub-agent: one of the open project's own definitions
+   *  (`.claude/agents/<name>.md`), kept at its desk between spawns. Its
+   *  `subagent_type`; it sits still while no spawn is bound to it. */
+  residentType?: string;
   /** Active matrix spawn/despawn effect, or null */
   matrixEffect: 'spawn' | 'despawn' | null;
   /** Timer counting up from 0 to MATRIX_EFFECT_DURATION */

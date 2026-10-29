@@ -10,6 +10,12 @@
 
 import * as path from 'path';
 
+import {
+  PROJECT_ALERTS_ENABLED,
+  PROJECT_WEB_PAGES_ENABLED,
+  SERVER_RACKS_ENABLED,
+  STATUS_BOARD_ENABLED,
+} from '../../core/src/constants.js';
 import { AgentRuntime } from './agentRuntime.js';
 import { AgentStateStore } from './agentStateStore.js';
 import {
@@ -18,6 +24,7 @@ import {
   loadAllFurniture,
   loadAllPets,
 } from './assetReload.js';
+import { startBridgeOps } from './bridgeOps.js';
 import type { AssetCache, ReloadAssetsSideEffect } from './clientMessageHandler.js';
 import {
   getHooksConsent,
@@ -31,10 +38,15 @@ import {
   TERMINAL_DISABLED_BY_FLAG_REASON,
   WILDCARD_HOSTNAMES,
 } from './constants.js';
+import { currentProjectFolder, projectsMessage } from './directories.js';
 import { FileStateAdapter } from './fileStateAdapter.js';
+import { startPipelineStatus } from './pipelineStatus.js';
+import { startProjectSubagentWatch } from './projectSubagents.js';
 import { claudeProvider, copyHookScript, hookProviderById } from './providers/index.js';
 import { PixelAgentsServer } from './server.js';
+import { startSystemStats } from './systemStats.js';
 import { PtySessionManager } from './terminal/ptySessionManager.js';
+import { startWebPages } from './webPages.js';
 import { isLoopbackHost, normalizeHostname } from './wsAuth.js';
 
 // ── Argument parsing ──────────────────────────────────────────
@@ -351,6 +363,25 @@ async function main(): Promise<void> {
 
     reportTerminalStatus(ptyManager, args.host, args.terminal);
 
+    // The in-office displays' pollers, skipped while the displays are off.
+    const noop = (): void => {};
+    // Server-room hardware monitor: broadcast CPU/RAM/disk stats for the
+    // in-office rack gauges.
+    const stopSystemStats = SERVER_RACKS_ENABLED ? startSystemStats(store) : noop;
+    // Per-project alert feeds (BRIDGE's today) for the antenna yard.
+    const stopBridgeOps = PROJECT_ALERTS_ENABLED ? startBridgeOps(store) : noop;
+    // Newest ezphot / NGSF-7DT / BRIDGE results for the status board.
+    const stopPipelineStatus = STATUS_BOARD_ENABLED ? startPipelineStatus(store) : noop;
+    // Project web pages (ports.md + loopback probes) for the per-Area panels.
+    const stopWebPages =
+      STATUS_BOARD_ENABLED || PROJECT_WEB_PAGES_ENABLED ? startWebPages(store) : noop;
+    // The open project's sub-agent definitions, for its resident characters.
+    const stopProjectSubagents = startProjectSubagentWatch(
+      store,
+      currentProjectFolder,
+      projectsMessage,
+    );
+
     // Sync runtime refs with persisted settings BEFORE first scan tick. The
     // runtime's single hooksEnabled ref follows the Claude provider until the
     // scanners grow per-provider awareness alongside the Settings UI.
@@ -427,6 +458,11 @@ async function main(): Promise<void> {
       // wait for them: exiting now would cancel the SIGKILL escalation and
       // leave a child that ignores SIGHUP orphaned on a dead server.
       await ptyManager.disposeAll();
+      stopSystemStats();
+      stopBridgeOps();
+      stopPipelineStatus();
+      stopWebPages();
+      stopProjectSubagents();
       runtime.dispose();
       server.stop();
       process.exit(0);

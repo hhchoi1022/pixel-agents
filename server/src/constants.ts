@@ -61,6 +61,19 @@ export const DIRECTORY_SUGGESTION_FILES_PER_SESSION_DIR = 5;
  *  by when a session last ran there. */
 export const DIRECTORY_SUGGESTION_LIMIT = 10;
 
+// ── Resumable Sessions ──────────────────────────────────────
+/** Upper bound on sessions the launch drawer's resume list offers. The newest
+ *  survive the cut -- the list is ordered by when a session was last written. */
+export const RESUMABLE_SESSION_LIMIT = 20;
+/** How much of a transcript's end is read for its name and last prompt. Both
+ *  are re-recorded on every resume and turn, so the tail holds the current ones. */
+export const RESUMABLE_SESSION_TAIL_BYTES = 65_536;
+/** How much of a transcript's start is read for its first prompt, the fallback
+ *  label when the tail records neither a name nor a last prompt. */
+export const RESUMABLE_SESSION_HEAD_BYTES = 65_536;
+/** A prompt longer than this is cut for the drawer row. */
+export const RESUMABLE_SESSION_PROMPT_MAX_CHARS = 120;
+
 // ── Display Truncation + Pixel Agents Server paths ──────────
 // Centralized in core/src/constants.ts; re-exported here for back-compat.
 export {
@@ -134,6 +147,21 @@ export const TERMINAL_DEFAULT_COLS = 80;
 export const TERMINAL_DEFAULT_ROWS = 24;
 /** TERM value exported into the PTY. */
 export const TERMINAL_TERM_NAME = 'xterm-256color';
+/** Claude Code session-identity vars stripped from the PTY env. A server
+ *  started from inside a Claude Code session inherits them, and a `claude`
+ *  launched with them runs as that session's child: no transcript is written
+ *  to ~/.claude/projects, so sub-agents (which need it) never appear. */
+export const TERMINAL_STRIPPED_ENV_VARS: readonly string[] = [
+  'CLAUDECODE',
+  'CLAUDE_CODE_CHILD_SESSION',
+  'CLAUDE_CODE_SESSION_ID',
+  'CLAUDE_PID',
+  'CLAUDE_CODE_MESSAGING_SOCKET',
+  'CLAUDE_CODE_MESSAGING_TOKEN',
+  'CLAUDE_CODE_ENTRYPOINT',
+  'CLAUDE_CODE_EXECPATH',
+  'CLAUDE_EFFORT',
+];
 /** Grace period between SIGHUP and SIGKILL when disposing a PTY. */
 export const TERMINAL_KILL_GRACE_MS = 2_000;
 /** How long shutdown waits past the SIGKILL escalation for the exits to land. */
@@ -152,6 +180,77 @@ export const TERMINAL_REQUIRES_TOKEN_REASON =
  *  host's console, where writeConfig logged it. */
 export const DIRECTORY_WRITE_FAILED_REASON =
   "Couldn't save the change: writing ~/.pixel-agents/config.json failed (see the host's log).";
+// ── BRIDGE alert feeds (bridgeOps.ts) ─────────────────────────
+// The status/events files and the dashboard are per project and per machine:
+// they come from ~/.pixel-agents/project-displays.json (projectDisplays.ts).
+/** Only the file's tail is scanned for diagnoses: a transition is a handful
+ *  of lines a day, so this covers months while bounding the read. */
+export const BRIDGE_OPS_EVENTS_TAIL_BYTES = 256 * 1024;
+/** The contract version we understand; a bump means the format changed. */
+export const BRIDGE_OPS_SCHEMA = 'bridge-ops-status/1';
+/** Re-read + re-broadcast cadence. The file changes every 10 min; this is
+ *  short because it is also how long a newly opened office waits for its
+ *  first picture (the file is ~4 KB, so the re-read is negligible). */
+export const BRIDGE_OPS_POLL_MS = 3_000;
+/** generated_at older than this many intervals = the monitor itself is dead. */
+export const BRIDGE_OPS_STALE_INTERVALS = 3;
+
+// ── Per-project displays (projectDisplays.ts) ─────────────────
+/** Which project shows which displays, and where (under ~/.pixel-agents/). */
+export const PROJECT_DISPLAYS_FILE = 'project-displays.json';
+/** Default band for the open project's displays: the void below the racks. */
+export const PROJECT_DISPLAYS_DEFAULT_ANCHOR = { col: 1, row: 16, cols: 12 };
+
+// ── Project sub-agents (projectSubagents.ts) ──────────────────
+/** A project's sub-agent definitions, relative to its Directory. */
+export const PROJECT_SUBAGENTS_DIR = '.claude/agents';
+/** How often the open project's definitions are re-read for changes. */
+export const PROJECT_SUBAGENTS_POLL_MS = 10_000;
+
+// ── Pipeline status board (pipelineStatus.ts) ─────────────────
+/** The board's source folders, per machine (under ~/.pixel-agents/):
+ *  { ezphotLogRoot, ezphotVizRoot, ngsfRunsRoot, bridgeResultsRoot }, each
+ *  optional — a missing one leaves that card empty. Layouts:
+ *  ezphotLogRoot/<objname>/process_images_<tag>.{csv,log};
+ *  ezphotVizRoot/ezphot/<objname>/viz/index.html;
+ *  ngsfRunsRoot/<objname>/<objname>_epoch<N>.fit (+ _qa.json, _qa_verdict.txt);
+ *  bridgeResultsRoot/<target>/. */
+export const PIPELINE_SOURCES_FILE = 'pipeline-status.json';
+/** NGSF's own "secure" rule (classify/status.py, qa_report.py). */
+export const NGSF_SECURE_TYPES = ['Ia', 'II', 'Ib', 'Ic'] as const;
+export const NGSF_SECURE_MARGIN = 0.5;
+/** Only a .fit's head is read for the top-1 row and the next type's margin. */
+export const NGSF_FIT_HEAD_BYTES = 64 * 1024;
+/** "Recent" window for the BRIDGE target count. */
+export const PIPELINE_STATUS_RECENT_DAYS = 7;
+/** Folder scan cadence (the agents' own pages refresh every 60 s). */
+export const PIPELINE_STATUS_SCAN_MS = 15_000;
+/** Re-broadcast of the last scan: how long a newly opened office waits. */
+export const PIPELINE_STATUS_BROADCAST_MS = 3_000;
+
+// ── Project web pages (webPages.ts) ───────────────────────────
+/** The port registry, `~/.pixel-agents/ports.md`: the projects' permanent
+ *  pages, a markdown table only the pixel-agents session edits (projects ask
+ *  through the superagent). Whether they run, and their PIDs, are scanned. */
+export const WEB_PAGES_REGISTRY_FILE_NAME = 'ports.md';
+/** The port band the projects serve pages from: every listener in it shows,
+ *  registered or not (an unregistered one is a one-off page). */
+export const WEB_PAGES_SCAN_PORT_MIN = 8760;
+export const WEB_PAGES_SCAN_PORT_MAX = 8780;
+/** Re-parse + re-probe cadence; also how long a new office waits. */
+export const WEB_PAGES_POLL_MS = 5_000;
+/** A port that hasn't accepted a loopback connection by now counts as down. */
+export const WEB_PAGES_PROBE_TIMEOUT_MS = 800;
+
+/** The Directory of the superagent, the session that relays between project
+ *  leads. Every other user-defined Directory is a project (listProjects). */
+export const SUPERAGENT_DIRECTORY_NAME = 'superagent';
+/** The role in a project lead's session name, `<project>/lead-<id>`: the name
+ *  the superagent finds it by. */
+export const LAUNCH_LEAD_ROLE = 'lead';
+/** Session-id characters ending a launched agent's session name, so two leads
+ *  of one project stay addressable. */
+export const LAUNCH_SESSION_NAME_ID_LENGTH = 4;
 /** Standalone persists its server token here (mode 0600, beside server.json) so
  *  the tokened URL a browser bookmarked keeps working across restarts. The
  *  embedded (VS Code) server still mints a fresh token per process. */

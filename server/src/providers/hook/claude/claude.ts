@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { normalizeProjectPath } from '../../../../../core/src/normalizeProjectPath.js';
-import type { AgentEvent, HookProvider } from '../../../../../core/src/provider.js';
+import type { AgentEvent, HookProvider, LaunchPeers } from '../../../../../core/src/provider.js';
 import {
   BASH_COMMAND_DISPLAY_MAX_LENGTH,
   TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
@@ -75,8 +75,18 @@ export function formatToolStatus(toolName: string, input?: unknown): string {
 // ── Session dir + launch command ──
 
 function getSessionDirs(workspacePath: string): string[] {
-  // Claude stores sessions at ~/.claude/projects/<workspace-path-with-dashes>/.
-  const dirName = normalizeProjectPath(workspacePath);
+  // Claude stores sessions at ~/.claude/projects/<workspace-path-with-dashes>/,
+  // hashed from the PHYSICAL cwd: a Directory registered through a symlink
+  // (~/code → /data/code) must hash to the resolved path, or the launched agent
+  // waits on a transcript that never appears while Watch All adopts the real one
+  // as a second, unnamed character. A missing path keeps the path as given.
+  let physicalPath = workspacePath;
+  try {
+    physicalPath = fs.realpathSync(workspacePath);
+  } catch {
+    /* not on disk (yet) */
+  }
+  const dirName = normalizeProjectPath(physicalPath);
   const projectDir = path.join(os.homedir(), '.claude', 'projects', dirName);
 
   // Try exact match first.
@@ -102,11 +112,70 @@ function getSessionDirs(workspacePath: string): string[] {
 function buildLaunchCommand(
   sessionId: string,
   cwd: string,
-  opts?: { bypassPermissions?: boolean },
+  opts?: { bypassPermissions?: boolean; peers?: LaunchPeers; resume?: boolean },
 ): { command: string; args: string[]; env?: Record<string, string> } {
-  const args = ['--session-id', sessionId];
+  // --resume keeps the session's id and appends to its transcript (a new id
+  // would take --fork-session), so the agent is tracked exactly like a launch.
+  const args = [opts?.resume ? '--resume' : '--session-id', sessionId];
   if (opts?.bypassPermissions) args.push('--dangerously-skip-permissions');
+  if (opts?.peers) {
+    // `--name` is the address ListAgents lists and SendMessage takes, verbatim
+    // (Claude neither slugifies it nor de-duplicates it).
+    args.push('--name', opts.peers.sessionName);
+    if (opts.peers.leadProjects) {
+      args.push('--append-system-prompt', superagentSystemPrompt(opts.peers));
+    }
+  }
   return { command: 'claude', args, env: { PWD: cwd } };
+}
+
+/** Tells the superagent where the project leads are: the live sessions named
+ *  `<project>/lead-<id>`. A name pattern rather than a roster, because leads
+ *  come and go after it starts. Leads get no such prompt — their own harness
+ *  runs the project, and work between projects is relayed, not self-organized. */
+export function superagentSystemPrompt({ sessionName, leadProjects = [] }: LaunchPeers): string {
+  const projects = leadProjects.map((p) => `"${p}"`).join(', ');
+  return [
+    `You were launched from the Pixel Agents office as the session "${sessionName}", the superagent that relays between projects.`,
+    `Each project's lead is a local Claude session named "<project>/lead-<id>"; the projects are ${projects || '(none registered)'}.`,
+    'Find the running leads with ListAgents and message them by name with SendMessage. A project may have no lead running, or more than one.',
+    'Sessions without such a name belong to other work; leave them alone unless the user asks.',
+  ].join(' ');
+}
+
+/** Sessions held by a running Claude process: each one registers itself in
+ *  `~/.claude/sessions/<pid>.json`, and a file whose pid is gone is a leftover
+ *  from a process that didn't clean up. */
+function getLiveSessionIds(): Set<string> {
+  const live = new Set<string>();
+  const dir = path.join(os.homedir(), '.claude', 'sessions');
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir).filter((entry) => entry.endsWith('.json'));
+  } catch {
+    return live;
+  }
+  for (const entry of entries) {
+    let record: { pid?: unknown; sessionId?: unknown };
+    try {
+      record = JSON.parse(fs.readFileSync(path.join(dir, entry), 'utf-8'));
+    } catch {
+      continue;
+    }
+    if (typeof record.pid !== 'number' || typeof record.sessionId !== 'string') continue;
+    if (isProcessAlive(record.pid)) live.add(record.sessionId);
+  }
+  return live;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM: the process exists but isn't ours to signal.
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
 }
 
 /** Root that holds every Claude session across all workspaces. Used by the
@@ -313,6 +382,7 @@ export const claudeProvider: HookProvider = {
   getSessionDirs,
   getAllSessionRoots,
   sessionFilePattern: '*.jsonl',
+  getLiveSessionIds,
   buildLaunchCommand,
 
   team: claudeTeamProvider,

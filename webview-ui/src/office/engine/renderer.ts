@@ -1,3 +1,9 @@
+import {
+  PROJECT_ALERTS_ENABLED,
+  PROJECT_WEB_PAGES_ENABLED,
+  SERVER_RACKS_ENABLED,
+  STATUS_BOARD_ENABLED,
+} from '../../../../core/src/constants.js';
 import type { ColorValue } from '../../components/ui/types.js';
 import {
   AREA_ACTIVE_ALPHA_MULTIPLIER,
@@ -32,6 +38,7 @@ import {
   HEADLESS_CHARACTER_ALPHA,
   HOVERED_OUTLINE_ALPHA,
   OUTLINE_Z_SORT_OFFSET,
+  RESIDENT_IDLE_ALPHA,
   ROTATE_BUTTON_BG,
   SEAT_AVAILABLE_COLOR,
   SEAT_BUSY_COLOR,
@@ -40,6 +47,7 @@ import {
   SELECTION_DASH_PATTERN,
   SELECTION_HIGHLIGHT_COLOR,
   VOID_TILE_DASH_PATTERN,
+  VOID_TILE_FILL_COLOR,
   VOID_TILE_OUTLINE_COLOR,
 } from '../../constants.js';
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js';
@@ -64,9 +72,13 @@ import type {
 } from '../types.js';
 import { CharacterState, TILE_SIZE, TileType } from '../types.js';
 import { getWallInstances, hasWallSprites, wallColorToHex } from '../wallTiles.js';
+import { collectBridgeFeedDrawables } from './bridgeFeeds.js';
 import { getCharacterSprite } from './characters.js';
 import { renderMatrixEffect } from './matrixEffect.js';
 import { getPetSpriteData } from './petEntity.js';
+import { collectProjectWebKioskDrawables } from './projectWebKiosk.js';
+import { collectServerRoomDrawables } from './serverRoom.js';
+import { collectStatusBoardDrawables } from './statusBoard.js';
 
 // ── Settings ────────────────────────────────────────────────────
 
@@ -309,8 +321,12 @@ export function renderTileGrid(
     for (let c = 0; c < tmCols; c++) {
       const tile = tileMap[r][c];
 
-      // Skip VOID tiles entirely (transparent)
-      if (tile === TileType.VOID) continue;
+      // VOID tiles: a flat fill (no floor, no furniture, not walkable)
+      if (tile === TileType.VOID) {
+        ctx.fillStyle = VOID_TILE_FILL_COLOR;
+        ctx.fillRect(offsetX + c * s, offsetY + r * s, s, s);
+        continue;
+      }
 
       if (tile === TileType.WALL || !useSpriteFloors) {
         // Wall tiles or fallback: solid color
@@ -351,8 +367,26 @@ export function renderScene(
   selectedAgentId: number | null,
   hoveredAgentId: number | null,
   pets: Pet[] = [],
+  /** Tile map the status board (alert yard + pipeline cards) follows. */
+  boardTiles?: TileTypeVal[][],
 ): void {
   const drawables: ZDrawable[] = [];
+
+  // Server-room hardware racks (live gauges fed by systemStats broadcasts)
+  if (SERVER_RACKS_ENABLED) collectServerRoomDrawables(drawables, offsetX, offsetY, zoom);
+
+  // The open project's alert-feed yard (bridgeOpsStatus)
+  if (PROJECT_ALERTS_ENABLED) collectBridgeFeedDrawables(drawables, offsetX, offsetY, zoom);
+
+  // The open project's web page kiosk (webPagesStatus), below the yard
+  if (PROJECT_WEB_PAGES_ENABLED) {
+    collectProjectWebKioskDrawables(drawables, offsetX, offsetY, zoom);
+  }
+
+  // Status board: pipeline cards (pipelineStatus)
+  if (STATUS_BOARD_ENABLED && boardTiles) {
+    collectStatusBoardDrawables(drawables, boardTiles, offsetX, offsetY, zoom);
+  }
 
   // Furniture
   for (const f of furniture) {
@@ -398,7 +432,13 @@ export function renderScene(
 
     // Headless agents (adopted, no terminal to focus) render translucent while
     // the "Display headless as ghosts" setting is on.
-    const alpha = ch.isHeadless && ghostHeadlessAgents ? HEADLESS_CHARACTER_ALPHA : 1;
+    // Resident sub-agents dim while they wait for a spawn.
+    const alpha =
+      ch.isHeadless && ghostHeadlessAgents
+        ? HEADLESS_CHARACTER_ALPHA
+        : ch.residentType !== undefined && !ch.isActive
+          ? RESIDENT_IDLE_ALPHA
+          : 1;
 
     // Matrix spawn/despawn effect — skip outline, use per-pixel rendering
     if (ch.matrixEffect) {
@@ -926,6 +966,7 @@ export function renderFrame(
     selectedId,
     hoveredId,
     pets ?? [],
+    tileMap,
   );
 
   // Character speech bubbles render in ToolOverlay (DOM, above the labels).
